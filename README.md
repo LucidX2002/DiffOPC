@@ -19,3 +19,9 @@ conda activate dopc
 # install requirements
 pip install -r requirements.txt
 ```
+
+## Run levelset
+
+```bash
+python src/opc/levelset.py
+```
