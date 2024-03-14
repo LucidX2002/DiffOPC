@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 
 from src.data.datatype import COMPLEXTYPE, REALTYPE
+from src.utils.utils import yaml2Cfg
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
@@ -216,8 +217,8 @@ class LithoSim(nn.Module):  # Mask -> Aerial -> Printed
         # Read the config from file or a given dict
         if isinstance(config, dict):
             self._config = config
-        # elif isinstance(config, str):
-        # self._config = common.parseConfig(config)
+        elif isinstance(config, str):
+            self._config = yaml2Cfg(config)
         required = [
             "KernelDir",
             "KernelNum",
