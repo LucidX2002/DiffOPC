@@ -198,8 +198,14 @@ def visualizeBoundaries(target, vposes, hposes):
 
     def draw_lines_and_text(lines, color):
         for line in lines:
-            start_point = (line[1][0].astype(int), line[0][0].astype(int))  # Swap to (x, y)
-            end_point = (line[1][1].astype(int), line[0][1].astype(int))  # Swap to (x, y)
+            start_point = (
+                line[1][0].astype(int),
+                line[0][0].astype(int),
+            )  # Swap to (x, y)
+            end_point = (
+                line[1][1].astype(int),
+                line[0][1].astype(int),
+            )  # Swap to (x, y)
             # Draw line
             print(f"start_point: {start_point}, end_point: {end_point}")
             cv2.line(target, start_point, end_point, color, 2)
@@ -236,98 +242,324 @@ def visualizeBoundaries(target, vposes, hposes):
     plt.show()
 
 
-# Example usage:
-# Assuming target, vposes, hposes are your image and lines as either NumPy arrays or PyTorch tensors
-# visualizeBoundaries(target, vposes, hposes)
-
-
 def segment_lines(lines, seg_length):
-    """Segment each line into smaller segments of fixed length from the midpoint towards the ends,
-    ensuring that all points are integer coordinates."""
-    if torch.is_tensor(lines):
-        lines = lines.cpu().numpy()
-    segmented_lines = []
+    """Segments each line in the input tensor into smaller segments of a fixed length. For lines
+    shorter than 2 * seg_length, it divides the line into two segments. Ensures that the
+    coordinates of the segments are integers.
 
-    for line in lines:
-        start_point = np.array([line[1][0], line[0][0]])  # [x, y] format
-        end_point = np.array([line[1][1], line[0][1]])  # [x, y] format
+    Args:
+        lines (torch.Tensor): Tensor of shape [N, 2, 2] representing the lines.
+                                Each line is stored as [[y1, y2], [x1, x2]].
+        seg_length (float): The fixed length for the segments.
 
-        midpoint = (start_point + end_point) / 2.0
-        direction = end_point - start_point
-        line_length = np.linalg.norm(direction)
-        direction_normalized = direction / line_length if line_length != 0 else direction
+    Returns:
+        list: A list of segmented lines. Each element in the list is a tensor
+                representing the segmented parts of a line, with integer coordinates.
+    """
 
-        segments_count = int(line_length / (2 * seg_length))
+    def split_edge(edge):
+        midpoint = torch.mean(edge, dim=1)
+        vector = edge[:, 1] - edge[:, 0]
+        length = torch.norm(vector)
+        direction = vector / length
 
-        for i in range(segments_count):
-            for direction_multiplier in [1, -1]:
-                segment_start = (
-                    midpoint + direction_normalized * seg_length * i * direction_multiplier
-                )
-                segment_end = (
-                    midpoint + direction_normalized * seg_length * (i + 1) * direction_multiplier
-                )
-                # Round to nearest integer and convert back to [[y1, y2], [x1, x2]] format
-                segment = np.rint([segment_start, segment_end]).astype(int)
-                segmented_lines.append(
-                    [[segment[0][1], segment[1][1]], [segment[0][0], segment[1][0]]]
-                )
+        segments = []
+        if length < 2 * seg_length:
+            # Round coordinates to nearest integer
+            start_point = torch.round(edge[:, 0])
+            end_point = torch.round(midpoint)
+            segments.append(torch.stack([start_point, end_point], dim=1))
 
-    return segmented_lines
+            start_point = torch.round(midpoint)
+            end_point = torch.round(edge[:, 1])
+            segments.append(torch.stack([start_point, end_point], dim=1))
+        else:
+            half_segments = int(length / seg_length / 2)
+            for i in range(-half_segments, half_segments + 1):
+                start_point = midpoint + direction * (i * seg_length - seg_length / 2)
+                end_point = midpoint + direction * (i * seg_length + seg_length / 2)
+
+                # Round coordinates to nearest integer
+                start_point = torch.round(start_point)
+                end_point = torch.round(end_point)
+
+                segments.append(torch.stack([start_point, end_point], dim=1))
+                # Adjust the last segment to ensure the entire edge is covered
+                if i == half_segments:
+                    segments[-1][:, 1] = torch.round(edge[:, 1])
+                elif i == -half_segments:
+                    segments[0][:, 0] = torch.round(edge[:, 0])
+
+        return segments
+
+    split_lines = [split_edge(lines[i]) for i in range(lines.shape[0])]
+
+    return split_lines
+
+
+def segment_lines_with_labels(vposes, hposes, seg_length):
+    """Segments vertical and horizontal lines into smaller segments of a fixed length, labels
+    vertical (V), horizontal (H), corner vertical (CV), and corner horizontal (CH) segments, and
+    assigns a unique ID to each segment.
+
+    Args:
+        vposes (torch.Tensor): Tensor of shape [N, 2, 2] representing the vertical lines.
+        hposes (torch.Tensor): Tensor of shape [M, 2, 2] representing the horizontal lines.
+        seg_length (float): The fixed length for the segments.
+
+    Returns:
+        list: A list of segmented lines with labels and IDs. Each element in the list is a dictionary
+              with 'segment' (tensor representing the segmented part of a line with integer coordinates),
+              'type' (string label of the segment type), and 'id' (unique identifier).
+    """
+
+    def split_edge(edge, seg_type_label, segment_id):
+        seg_length = SEG_LENGTH
+        midpoint = torch.mean(edge, dim=1)
+        vector = edge[:, 1] - edge[:, 0]
+        length = torch.norm(vector)
+        direction = vector / length
+
+        segments = []
+
+        if length < seg_length:
+            # Treat both ends as corners if the segment is short
+            seg_type_label = "C" + seg_type_label
+            start_point = torch.round(edge[:, 0])
+            end_point = torch.round(midpoint)
+            segments.append(
+                {
+                    "segment": torch.stack([start_point, end_point], dim=1),
+                    "type": seg_type_label,
+                    "id": segment_id,
+                }
+            )
+            segment_id += 1
+
+            start_point = torch.round(midpoint)
+            end_point = torch.round(edge[:, 1])
+            segments.append(
+                {
+                    "segment": torch.stack([start_point, end_point], dim=1),
+                    "type": seg_type_label,
+                    "id": segment_id,
+                }
+            )
+            segment_id += 1
+        else:
+            # Calculate segments from the midpoint to each end.
+            steps_to_edge = length / 2 / seg_length
+            full_steps = int(steps_to_edge)
+            if full_steps == 0:
+                full_steps = 1
+
+            for i in range(-full_steps, full_steps + 1):
+                if i == -full_steps:
+                    start_point = edge[:, 0]
+                else:
+                    start_point = midpoint + direction * (
+                        i * seg_length - min(seg_length / 2, length / 2)
+                    )
+
+                if i == full_steps:
+                    end_point = edge[:, 1]
+                else:
+                    end_point = midpoint + direction * (
+                        i * seg_length + min(seg_length / 2, length / 2)
+                    )
+
+                # Round coordinates to nearest integer
+                start_point, end_point = torch.round(start_point), torch.round(end_point)
+
+                # Determine if this segment exceeds the seg_length, split it if necessary
+                segment_length = torch.norm(end_point - start_point)
+                if segment_length > seg_length:
+                    # Calculate new midpoint for splitting the segment
+                    new_midpoint = (start_point + end_point) / 2
+                    # First half
+                    segments.append(
+                        {
+                            "segment": torch.stack([start_point, new_midpoint], dim=1),
+                            "type": "C" + seg_type_label if i in [-full_steps] else seg_type_label,
+                            "id": segment_id,
+                        }
+                    )
+                    segment_id += 1
+                    # Second half
+                    segments.append(
+                        {
+                            "segment": torch.stack([new_midpoint, end_point], dim=1),
+                            "type": "C" + seg_type_label if i in [full_steps] else seg_type_label,
+                            "id": segment_id,
+                        }
+                    )
+                    segment_id += 1
+                else:
+                    segments.append(
+                        {
+                            "segment": torch.stack([start_point, end_point], dim=1),
+                            "type": "C" + seg_type_label
+                            if i in [-full_steps, full_steps]
+                            else seg_type_label,
+                            "id": segment_id,
+                        }
+                    )
+                    segment_id += 1
+        return segments, segment_id
+
+    all_segments = []
+    segment_id = 0  # Initialize global segment ID
+
+    # Process vertical segments
+    for vpose in vposes:
+        new_segments, segment_id = split_edge(vpose, "V", segment_id)
+        all_segments.extend(new_segments)
+
+    # Process horizontal segments
+    for hpose in hposes:
+        new_segments, segment_id = split_edge(hpose, "H", segment_id)
+        all_segments.extend(new_segments)
+
+    return all_segments
 
 
 def visualize_segments(image, vsegments, hsegments):
-    """Visualize vertical (vsegments) and horizontal (hsegments) segments on the image, ensuring
-    the image is in RGB format to draw colored lines and text.
+    """Visualizes vertical and horizontal segments over an image. Vertical segments are displayed
+    in blue, and horizontal segments in red.
 
-    input:
-    [[y1, y2], [x1, x2]]
+    Args:
+        image (numpy.ndarray): The original image on which to overlay the segments.
+        vsegments (list of torch.Tensor): A list where each element is a tensor representing
+                                        the segmented parts of a vertical line.
+        hsegments (list of torch.Tensor): A list where each element is a tensor representing
+                                        the segmented parts of a horizontal line.
     """
     if torch.is_tensor(image):
         image = image.cpu().numpy()
-    # Ensure the image is in RGB format
+    # Convert the image to RGB if it is grayscale for colored line drawing
     if len(image.shape) == 2 or image.shape[2] == 1:
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    else:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-    image_copy = image.copy()
     segment_number = 1
 
     def draw_segments(segments, color):
+        """Draws the given segments on the image in the specified color.
+
+        Args:
+            segments (list of torch.Tensor): A list of tensors representing line segments.
+            color (tuple): The color to use for drawing the segments as (B, G, R).
+        """
         nonlocal segment_number
-        for segment in segments:
-            # Swap to (x, y) format
-            start_point = (segment[1][0], segment[0][0])
-            end_point = (segment[1][1], segment[0][1])
-            mid_point = (
-                (start_point[0] + end_point[0]) // 2,
-                (start_point[1] + end_point[1]) // 2,
-            )
+        for seg_list in segments:
+            for seg in seg_list:
+                start_point = (int(seg[1, 0].item()), int(seg[0, 0].item()))
+                end_point = (int(seg[1, 1].item()), int(seg[0, 1].item()))
+                mid_point = (
+                    (start_point[0] + end_point[0]) // 2,
+                    (start_point[1] + end_point[1]) // 2,
+                )
+                cv2.line(image, start_point, end_point, color, thickness=2)
+                cv2.circle(image, start_point, 3, color, -1)
+                cv2.putText(
+                    image,
+                    f"{segment_number}",
+                    mid_point,
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    color,
+                    1,
+                    cv2.LINE_AA,
+                )
+                segment_number += 1
 
-            cv2.line(image_copy, start_point, end_point, color, 1)
-            cv2.circle(image_copy, start_point, 3, color, -1)
-            cv2.circle(image_copy, end_point, 3, color, -1)
-            # cv2.putText(image_copy, f"{segment[0]}", (start_point[0]+5, start_point[1]-5), cv2.FONT_HERSHEY_SIMPLEX,
-            #             0.3, color, 1)
-            # cv2.putText(image_copy, f"{segment[1]}", (end_point[0]+5, end_point[1]-5), cv2.FONT_HERSHEY_SIMPLEX,
-            #             0.3, color, 1)
-            cv2.putText(
-                image_copy,
-                f"{segment_number}",
-                mid_point,
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                color,
-                1,
-                cv2.LINE_AA,
-            )
-            segment_number += 1
+    # Blue for vertical segments, red for horizontal segments
+    draw_segments(vsegments, (255, 0, 0))  # Blue in BGR format
+    draw_segments(hsegments, (0, 0, 255))  # Red in BGR format
 
-    draw_segments(vsegments, (255, 0, 0))  # Blue color for vertical segments
-    draw_segments(hsegments, (0, 0, 255))  # Red color for horizontal segments
-
-    plt.imshow(cv2.cvtColor(image_copy, cv2.COLOR_BGR2RGB))
-    plt.axis("off")
+    # Use Matplotlib to display the image
+    plt.imshow(image)
+    plt.axis("off")  # Hide axis
+    plt.title("Segmented Lines on Image")
     plt.show()
+
+
+def visualize_segments_with_labels(image, segments, seg_name=None):
+    """Visualizes segments over an image, coloring them based on their type. Vertical segments are
+    blue, horizontal segments are red, and corner segments are yellow.
+
+    Args:
+        image (numpy.ndarray): The original image on which to overlay the segments.
+        segments (list): A list of dictionaries, each containing a 'segment' (torch.Tensor
+                        representing the segmented part of a line with integer coordinates),
+                        'type' (string label of the segment type), and 'id' (unique identifier).
+    """
+    if torch.is_tensor(image):
+        image = image.cpu().numpy()
+    # Convert the image to RGB if it is grayscale for colored line drawing
+    if len(image.shape) == 2 or image.shape[2] == 1:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    else:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    color_map = {
+        "V": (255, 0, 0),  # Blue
+        "H": (0, 0, 255),  # Red
+        "CV": (255, 255, 0),  # Yellow
+        "CH": (255, 255, 0),  # Yellow
+    }
+
+    for seg_info in segments:
+        seg = seg_info["segment"]
+        seg_type = seg_info["type"]
+        seg_id = seg_info["id"]
+        color = color_map.get(seg_type, (255, 255, 255))  # Default to white if type unknown
+        start_point = (int(seg[1, 0].item()), int(seg[0, 0].item()))
+        end_point = (int(seg[1, 1].item()), int(seg[0, 1].item()))
+        mid_point = (
+            (start_point[0] + end_point[0]) // 2,
+            (start_point[1] + end_point[1]) // 2,
+        )
+        cv2.line(image, start_point, end_point, color, thickness=2)
+        cv2.circle(image, start_point, 3, color, -1)
+        cv2.circle(image, end_point, 3, color, -1)
+        # cv2.putText(
+        #     image,
+        #     f"{start_point[0]}",
+        #     start_point,
+        #     cv2.FONT_HERSHEY_SIMPLEX,
+        #     0.3,
+        #     color,
+        #     1,
+        #     cv2.LINE_AA,
+        # )
+        cv2.putText(
+            image,
+            f"{seg_id}",
+            mid_point,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            color,
+            1,
+            cv2.LINE_AA,
+        )
+
+    # Use Matplotlib to display the image
+    plt.imshow(image)
+    plt.axis("off")  # Hide axis
+    plt.title("Segmented Lines with Labels on Image")
+    if seg_name:
+        plt.savefig(seg_name, bbox_inches="tight", dpi=300)
+    else:
+        plt.show()
+    # plt.show()
+
+
+# Example usage:
+# Assuming `image` is a numpy.ndarray representing your image,
+# and `segments` is the output from the segment_lines_with_labels function.
+# visualize_segments_with_labels(image, segments)
 
 
 def check(image, sample, target, direction):
@@ -551,8 +783,8 @@ def evaluate(mask, target, litho, scale=1, shots=False, verbose=False):
 
 if __name__ == "__main__":
     # targetfile = "./benchmark/edge_bench/edge_test1.glp"
-    maskfile = "./benchmark/edge_bench/edge_test1.glp"
-    # maskfile = "./benchmark/ICCAD2013/M1_test1.glp"
+    # maskfile = "./benchmark/edge_bench/edge_test1.glp"
+    # mask_shape = (512, 512)
     # litho = LithoSim("./configs/litho/default.yaml")
     # test = Basic(litho, 0.5)
     # epeCheck = EPEChecker(litho, 0.5)
@@ -561,19 +793,22 @@ if __name__ == "__main__":
     # ref = glp.Design(targetfile, down=1)
     # ref.center(2048, 2048, 0, 0)
     # target = ref.mat(2048, 2048, 0, 0)
-
-    mref = glp.Design(maskfile, down=1)
-    mask_shape = (512, 512)
-    # mask_shape = (2048, 2048)
-    mref.center(mask_shape[0], mask_shape[1], 0, 0)
-    mask = mref.mat(mask_shape[0], mask_shape[1], 0, 0)
-    # mask = mref.mat(2048, 2048, 0, 0)
-    mask_tensor = torch.tensor(mask, dtype=REALTYPE, device=DEVICE)
-    vposes, hposes = boundaries(mask_tensor)
+    for i in range(1, 10):
+        maskfile = f"./benchmark/ICCAD2013/M1_test{i}.glp"
+        mask_shape = (1280, 1280)
+        mref = glp.Design(maskfile, down=1)
+        mref.center(mask_shape[0], mask_shape[1], 0, 0)
+        mask = mref.mat(mask_shape[0], mask_shape[1], 0, 0)
+        mask_tensor = torch.tensor(mask, dtype=REALTYPE, device=DEVICE)
+        vposes, hposes = boundaries(mask_tensor)
+        segs = segment_lines_with_labels(vposes, hposes, SEG_LENGTH)
+        seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg.png"
+        visualize_segments_with_labels(mask_tensor, segs, seg_name)
     # visualizeBoundaries(mask_tensor, vposes, hposes)
-    vsegs = segment_lines(vposes, SEG_LENGTH)
-    hsegs = segment_lines(hposes, SEG_LENGTH)
-    visualize_segments(mask_tensor, vsegs, hsegs)
+    # vsegs = segment_lines(vposes, SEG_LENGTH)
+    # hsegs = segment_lines(hposes, SEG_LENGTH)
+    # visualize_segments(mask_tensor, vsegs, hsegs)
+
     # l2, pvb = test.run(mask, target, scale=1)
     # epeIn, epeOut = epeCheck.run(mask, target, scale=1)
     # epe = epeIn + epeOut
