@@ -25,3 +25,5 @@ pip install -r requirements.txt
 ```bash
 python src/opc/levelset.py
 ```
+
+## Run segments
