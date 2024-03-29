@@ -3,6 +3,7 @@ import sys
 sys.path.append(".")
 import math
 import multiprocessing as mp
+from itertools import groupby
 
 import cv2
 import matplotlib.pyplot as plt
@@ -12,13 +13,15 @@ import torch.nn as nn
 import torch.nn.functional as func
 import torch.optim as optim
 
-from src.data.datatype import COMPLEXTYPE, REALTYPE
+import src.data.loaders.segments as SegLoader
+from src.data.datatype import COMPLEXTYPE, INTTYPE, REALTYPE
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
+from kornia.utils import draw_convex_polygon
 from rich import print
 
-from src.data.loaders import glp
+from src.data.loaders import glp_seg
 
 # import pylitho.simple as lithosim
 # import pylitho.exact as lithosim
@@ -87,7 +90,7 @@ EPE_CONSTRAINT = 15
 EPE_CHECK_INTERVEL = 40
 MIN_EPE_CHECK_LENGTH = 80
 EPE_CHECK_START_INTERVEL = 40
-SEG_LENGTH = 40
+SEG_LENGTH = 100
 
 
 def boundaries(target, dtype=REALTYPE, device=DEVICE):
@@ -247,603 +250,521 @@ def visualizeBoundaries(target, vposes, hposes):
     plt.show()
 
 
-def segment_lines(lines, seg_length):
-    """Segments each line in the input tensor into smaller segments of a fixed length. For lines
-    shorter than 2 * seg_length, it divides the line into two segments. Ensures that the
-    coordinates of the segments are integers.
-
-    Args:
-        lines (torch.Tensor): Tensor of shape [N, 2, 2] representing the lines.
-                                Each line is stored as [[y1, y2], [x1, x2]].
-        seg_length (float): The fixed length for the segments.
-
-    Returns:
-        list: A list of segmented lines. Each element in the list is a tensor
-                representing the segmented parts of a line, with integer coordinates.
-    """
-
-    def split_edge(edge):
-        midpoint = torch.mean(edge, dim=1)
-        vector = edge[:, 1] - edge[:, 0]
-        length = torch.norm(vector)
-        direction = vector / length
-
-        segments = []
-        if length < 2 * seg_length:
-            # Round coordinates to nearest integer
-            start_point = torch.round(edge[:, 0])
-            end_point = torch.round(midpoint)
-            segments.append(torch.stack([start_point, end_point], dim=1))
-
-            start_point = torch.round(midpoint)
-            end_point = torch.round(edge[:, 1])
-            segments.append(torch.stack([start_point, end_point], dim=1))
-        else:
-            half_segments = int(length / seg_length / 2)
-            for i in range(-half_segments, half_segments + 1):
-                start_point = midpoint + direction * (i * seg_length - seg_length / 2)
-                end_point = midpoint + direction * (i * seg_length + seg_length / 2)
-
-                # Round coordinates to nearest integer
-                start_point = torch.round(start_point)
-                end_point = torch.round(end_point)
-
-                segments.append(torch.stack([start_point, end_point], dim=1))
-                # Adjust the last segment to ensure the entire edge is covered
-                if i == half_segments:
-                    segments[-1][:, 1] = torch.round(edge[:, 1])
-                elif i == -half_segments:
-                    segments[0][:, 0] = torch.round(edge[:, 0])
-
-        return segments
-
-    split_lines = [split_edge(lines[i]) for i in range(lines.shape[0])]
-
-    return split_lines
-
-
-def segment_lines_with_labels(vposes, hposes, seg_length=SEG_LENGTH, device=DEVICE):
+def segment_polygon_edges_with_labels(polygon_edges, seg_length=SEG_LENGTH, device="cpu"):
     """Segments vertical and horizontal lines into smaller segments of a fixed length, labels
     vertical (V), horizontal (H), corner vertical (CV), and corner horizontal (CH) segments, and
     assigns a unique ID to each segment.
 
     Args:
-        vposes (torch.Tensor): Tensor of shape [N, 2, 2] representing the vertical lines.
-        hposes (torch.Tensor): Tensor of shape [M, 2, 2] representing the horizontal lines.
+        polygon_edges (torch.Tensor): Tensor of shape [P, N, 2, 2] representing the,
+        P: polygon number,
+        N: edge number,
+        2: start and end point of the edge,
+        2: 2-D space (x, y)
         seg_length (float): The fixed length for the segments.
-
     Returns:
-        list: A list of segmented lines with labels and IDs. Each element in the list is a dictionary
+        polygon_edge_list: A list of polygons, each contains segmented lines with labels and IDs.
+            Each element in the list is a dictionary
             with 'segment' (tensor representing the segmented part of a line with integer coordinates),
             'type' (string label of the segment type), and 'id' (unique identifier).
     """
+    device = "cpu"
 
-    def split_edge(edge, seg_type_label, segment_id):
-        # seg_length = SEG_LENGTH
-        midpoint = torch.mean(edge, dim=1)
+    def split_edge(edge, segment_id):
+        midpoint = torch.mean(edge, dim=1).round()
+        if not torch.equal(edge, edge.round()):
+            raise ValueError("Edge is not integer.")
+
         vector = edge[:, 1] - edge[:, 0]
         length = torch.norm(vector)
         direction = vector / length
+        is_horizontal = torch.abs(direction[0]) > torch.abs(direction[1])
+        seg_type_label = "H" if is_horizontal else "V"
 
-        backup_seg_id = segment_id
         segments = []
-
-        # deal with the short edges
         if length < seg_length:
             # Treat both ends as corners if the segment is short
             seg_type_label = "C" + seg_type_label
-            start_point = torch.round(edge[:, 0])
-            end_point = torch.round(midpoint)
-            seg = {
-                "segment": torch.stack([start_point, end_point], dim=1).requires_grad_(),
-                "type": seg_type_label,
-                "id": segment_id,
-                "start": True,
-                "end": False,
-                "next": segment_id + 1,
-            }
-            segments.append(seg)
-            segment_id += 1
-
-            start_point = torch.round(midpoint)
-            end_point = torch.round(edge[:, 1])
-            segments.append(
-                {
-                    "segment": torch.stack([start_point, end_point], dim=1).requires_grad_(),
-                    "type": seg_type_label,
-                    "id": segment_id,
-                    "start": False,
-                    "end": True,
-                    "next": None,
-                }
+            segments.extend(
+                create_segment(
+                    edge[:, 0], midpoint, seg_type_label, segment_id, True, False, direction
+                )
             )
-            segment_id += 1
-        # the long edges
+            segments.extend(
+                create_segment(
+                    midpoint, edge[:, 1], seg_type_label, segment_id + 1, False, True, direction
+                )
+            )
+            segment_id += 2
         else:
-            # Calculate segments from the midpoint to each end.
             steps_to_edge = length / 2 / seg_length
-            full_steps = int(steps_to_edge)
-            if full_steps == 0:
-                full_steps = 1
+            full_steps = max(int(steps_to_edge), 1)
 
             for i in range(-full_steps, full_steps + 1):
-                # the left most
-                if i == -full_steps:
-                    start_point = edge[:, 0]
-                    left_most = True
-                else:
-                    start_point = midpoint + direction * (
-                        i * seg_length - min(seg_length / 2, length / 2)
-                    )
-                    left_most = False
+                start_point = (
+                    edge[:, 0]
+                    if i == -full_steps
+                    else midpoint + direction * (i * seg_length - min(seg_length / 2, length / 2))
+                )
+                end_point = (
+                    edge[:, 1]
+                    if i == full_steps
+                    else midpoint + direction * (i * seg_length + min(seg_length / 2, length / 2))
+                )
 
-                # the right most
-                if i == full_steps:
-                    end_point = edge[:, 1]
-                    right_most = True
-                else:
-                    end_point = midpoint + direction * (
-                        i * seg_length + min(seg_length / 2, length / 2)
-                    )
-                    right_most = False
-
-                # Normal edges
-                # Round coordinates to nearest integer
-                start_point, end_point = torch.round(start_point), torch.round(end_point)
-
-                # Determine if this segment exceeds the seg_length, split it if necessary
+                start_point, end_point = start_point.round(), end_point.round()
                 segment_length = torch.norm(end_point - start_point)
+
                 if segment_length > seg_length:
-                    # Calculate new midpoint for splitting the segment
                     new_midpoint = (start_point + end_point) / 2
-                    # First half
-                    segments.append(
-                        {
-                            "segment": torch.stack(
-                                [start_point, new_midpoint], dim=1
-                            ).requires_grad_(),
-                            "type": "C" + seg_type_label if i in [-full_steps] else seg_type_label,
-                            "id": segment_id,
-                            "start": left_most,
-                            "end": False,
-                            "next": segment_id + 1,
-                        }
+                    new_midpoint = new_midpoint.round()
+                    segments.extend(
+                        create_segment(
+                            start_point,
+                            new_midpoint,
+                            seg_type_label,
+                            segment_id,
+                            i == -full_steps,
+                            False,
+                            direction,
+                        )
                     )
-                    segment_id += 1
-                    # Second half
-                    segments.append(
-                        {
-                            "segment": torch.stack(
-                                [new_midpoint, end_point], dim=1
-                            ).requires_grad_(),
-                            "type": "C" + seg_type_label if i in [full_steps] else seg_type_label,
-                            "id": segment_id,
-                            "start": False,
-                            "end": right_most,
-                            "next": segment_id + 1 if right_most is False else None,
-                        }
+                    segments.extend(
+                        create_segment(
+                            new_midpoint,
+                            end_point,
+                            seg_type_label,
+                            segment_id + 1,
+                            False,
+                            i == full_steps,
+                            direction,
+                        )
                     )
-                    segment_id += 1
+                    segment_id += 2
                 else:
-                    seg = {
-                        "segment": torch.stack([start_point, end_point], dim=1).requires_grad_(),
-                        "type": "C" + seg_type_label
-                        if i in [-full_steps, full_steps]
-                        else seg_type_label,
-                        "id": segment_id,
-                        "start": left_most,
-                        "end": right_most,
-                        "next": segment_id + 1 if right_most is False else None,
-                    }
-                    segments.append(seg)
+                    segments.extend(
+                        create_segment(
+                            start_point,
+                            end_point,
+                            seg_type_label,
+                            segment_id,
+                            i == -full_steps,
+                            i == full_steps,
+                            direction,
+                        )
+                    )
                     segment_id += 1
+        # the last segment should be the end of the polygon
         return segments, segment_id
+
+    def create_segment(
+        start_point, end_point, seg_type_label, segment_id, is_start, is_end, direction
+    ):
+        return [
+            {
+                "segment": torch.stack([start_point, end_point], dim=1).requires_grad_(),
+                "type": ("C" if is_start or is_end else "") + seg_type_label,
+                "id": segment_id,
+                "start": is_start,
+                "end": is_end,
+                "next": None if is_end else segment_id + 1,
+                "direction": direction,
+            }
+        ]
 
     all_segments = []
     segment_id = 0  # Initialize global segment ID
-
     # Process vertical segments
-    for vpose in vposes:
-        new_segments, segment_id = split_edge(vpose, "V", segment_id)
-        all_segments.extend(new_segments)
+    for poly in polygon_edges:
+        poly_segments = []
+        for poly_id, edge in enumerate(poly):
+            edge = torch.tensor(edge, dtype=REALTYPE, device=device)
+            new_segments, segment_id = split_edge(edge, segment_id)
+            poly_segments.extend(new_segments)
+        all_segments.append(poly_segments)
 
-    # Process horizontal segments
-    for hpose in hposes:
-        new_segments, segment_id = split_edge(hpose, "H", segment_id)
-        all_segments.extend(new_segments)
-
-    # Process the corner segments and connect the end line to the corner start
-    # Process the corner type : ┐
-    end_segs = [seg for seg in all_segments if seg["end"] is True]
-    start_segs = [seg for seg in all_segments if seg["start"] is True]
-
-    for end_seg in end_segs:
-        for start_seg in start_segs:
-            if torch.equal(end_seg["segment"][:, 1], start_seg["segment"][:, 0]):
-                update_seg_next_byid(end_seg, end_seg["id"], start_seg["id"])
-
-    # now, only the end_seg [: 1], start_seg [: 0] are connected
-    # still, we need to define the end_seg, vertical and end_seg horizontal.
-    none_end_segs = [seg for seg in end_segs if seg["next"] is None]
-    CV_none_ends = [seg for seg in none_end_segs if seg["type"] == "CV"]
-    CH_none_ends = [seg for seg in none_end_segs if seg["type"] == "CH"]
-    # process the corner type : ┘
-    for cv in CV_none_ends:
-        for ch in CH_none_ends:
-            if torch.equal(cv["segment"][:, 1], ch["segment"][:, 1]):
-                update_seg_next_byid(cv, cv["id"], ch["id"])
-                update_seg_next_byid(ch, ch["id"], cv["id"])
-                break
-
-    # process the corner type: ┌, and do special mark
-    for start_seg in start_segs:
-        for start_seg2 in start_segs:
-            # start points are the same
-            if "prev" in start_seg2.keys():
-                continue
-            if start_seg["id"] == start_seg2["id"]:
-                continue
-            if torch.equal(start_seg["segment"][:, 0], start_seg2["segment"][:, 0]):
-                update_seg_prev_byid(start_seg, start_seg["id"], start_seg2["id"])
-                update_seg_prev_byid(start_seg2, start_seg2["id"], start_seg["id"])
-                break
     return all_segments
 
 
-def visualize_segments(image, vsegments, hsegments):
-    """Visualizes vertical and horizontal segments over an image. Vertical segments are displayed
-    in blue, and horizontal segments in red.
+def create_binary_mask(polygons, width, height, device=None):
+    """Create a binary mask where points inside any of the polygons are marked as 1 and others as
+    0.
 
     Args:
-        image (numpy.ndarray): The original image on which to overlay the segments.
-        vsegments (list of torch.Tensor): A list where each element is a tensor representing
-                                        the segmented parts of a vertical line.
-        hsegments (list of torch.Tensor): A list where each element is a tensor representing
-                                        the segmented parts of a horizontal line.
+        polygons: A list of polygons, where each polygon is represented by its vertex coordinates with shape (n, 2),
+                where n is the number of vertices.
+        width: Width of the plane.
+        height: Height of the plane.
+
+    Returns:
+        A binary mask with shape (height, width), where points inside any of the polygons are marked as 1 and others as 0.
     """
-    if torch.is_tensor(image):
-        image = image.cpu().numpy()
-    # Convert the image to RGB if it is grayscale for colored line drawing
-    if len(image.shape) == 2 or image.shape[2] == 1:
-        image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-    else:
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    # Determine the device to use
+    if device is None:
+        device = polygons[0].device
 
-    segment_number = 1
+    # Create a grid representing all points on the plane
+    x = torch.arange(width, dtype=torch.float32, device=device)
+    y = torch.arange(height, dtype=torch.float32, device=device)
+    grid_y, grid_x = torch.meshgrid(y, x, indexing="ij")
+    points = torch.stack([grid_x, grid_y], dim=-1)
 
-    def draw_segments(segments, color):
-        """Draws the given segments on the image in the specified color.
+    # Initialize the binary mask
+    mask = torch.zeros_like(grid_x, dtype=torch.bool)
 
-        Args:
-            segments (list of torch.Tensor): A list of tensors representing line segments.
-            color (tuple): The color to use for drawing the segments as (B, G, R).
-        """
-        nonlocal segment_number
-        for seg_list in segments:
-            for seg in seg_list:
-                start_point = (int(seg[1, 0].item()), int(seg[0, 0].item()))
-                end_point = (int(seg[1, 1].item()), int(seg[0, 1].item()))
-                mid_point = (
-                    (start_point[0] + end_point[0]) // 2,
-                    (start_point[1] + end_point[1]) // 2,
-                )
-                cv2.line(image, start_point, end_point, color, thickness=2)
-                cv2.circle(image, start_point, 3, color, -1)
-                cv2.putText(
-                    image,
-                    f"{segment_number}",
-                    mid_point,
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    color,
-                    1,
-                    cv2.LINE_AA,
-                )
-                segment_number += 1
+    # Extract edges and polygon IDs
+    edges = []
+    polygon_ids = []
+    for i, polygon in enumerate(polygons):
+        polygon_edges = torch.cat([polygon, polygon[:1]], dim=0)
+        edges.append(polygon_edges)
+        polygon_ids.append(torch.full((len(polygon_edges),), i, dtype=torch.int32))
+    edges = torch.cat(edges, dim=0)
+    polygon_ids = torch.cat(polygon_ids, dim=0)
 
-    # Blue for vertical segments, red for horizontal segments
-    draw_segments(vsegments, (255, 0, 0))  # Blue in BGR format
-    draw_segments(hsegments, (0, 0, 255))  # Red in BGR format
+    # Initialize the intersection counter
+    count = torch.zeros_like(grid_x, dtype=torch.int32)
+    for i in range(len(edges) - 1):
+        if polygon_ids[i] == polygon_ids[i + 1]:
+            # Calculate the vectors from each point to the edge endpoints
+            v1 = edges[i] - points
+            v2 = edges[i + 1] - points
 
-    # Use Matplotlib to display the image
-    plt.imshow(image)
-    plt.axis("off")  # Hide axis
-    plt.title("Segmented Lines on Image")
-    plt.show()
+            # Calculate the cross product of v1 and v2
+            cross = v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]
+            # Check if the point is on the edge
+            on_edge = (v1[..., 0] == 0) & (v1[..., 1] >= 0) & (v2[..., 1] < 0)
+            # Check if the point is inside the polygon
+            inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | (
+                (v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0)
+            )
+            # Increment the count for points inside the polygon or on the edge
+            count += (inside | on_edge).int()
+    # If the count is odd, the point is inside at least one polygon
+    mask = count % 2 == 1
+    return mask
 
 
-def traverse_from_start(all_segments, start_seg):
-    traverse_list = []
-    end_pairs = []
-    while start_seg["next"] is not None:
-        traverse_list.append(start_seg["id"])
-        next_start_seg = get_segment_obj_byid(all_segments, start_seg["next"])
-        # print(f"{start_seg['id']} -> {next_start_seg['id']}")
-        if start_seg["next"] == next_start_seg["id"] and next_start_seg["next"] == start_seg["id"]:
-            ep = [start_seg["id"], next_start_seg["id"]]
-            ep.sort()
-            ep = tuple(ep)
-            end_pairs.append(ep)
-            break
-        else:
-            start_seg = next_start_seg.copy()
-    # for seg_id in traverse_list:
-    # seg_traverse_list_str = [f"{str(seg['id'])} -> " for seg in traverse_list[:-1]]
-    # seg_traverse_list_str.append(str(traverse_list[-1]["id"]))
-    # print(" -> ".join([str(id) for id in traverse_list]))
-    return traverse_list, end_pairs
+def create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, height, device=None):
+    """Create a binary mask where points inside any of the polygons are marked as 1 and others as
+    0.
+
+    Args:
+    vertices (torch.Tensor): Vertice tensor of shape [M, 2], where M is the total number of vertices,                            and 2 represents 2-D coordinates (x, y)
+    vertices_polygon_ids (torch.Tensor): Tensor of shape [M] containing polygon IDs for each vertex
+    width: Width of the plane.
+    height: Height of the plane.
+    device: Device to use for computations (default: None)
+
+    Returns:
+    A binary mask with shape (height, width), where points inside any of the polygons are marked as 1 and others as 0.
+    """
+    # Determine the device to use
+    if device is None:
+        device = vertices.device
+
+    # Create a grid representing all points on the plane
+    x = torch.arange(width, dtype=torch.float32, device=device)
+    y = torch.arange(height, dtype=torch.float32, device=device)
+    grid_y, grid_x = torch.meshgrid(y, x, indexing="ij")
+    points = torch.stack([grid_x, grid_y], dim=-1)
+
+    # Initialize the binary mask
+    mask = torch.zeros_like(grid_x, dtype=torch.bool)
+
+    # Get the unique polygon IDs
+    unique_ids = torch.unique(vertices_polygon_ids)
+
+    # Initialize the intersection counter
+    count = torch.zeros_like(grid_x, dtype=torch.int32)
+
+    # Iterate over each polygon ID
+    for idx in unique_ids:
+        # Get the vertices corresponding to the current polygon ID
+        polygon_vertices = vertices[vertices_polygon_ids == idx]
+        # Create edges by connecting consecutive vertices and closing the polygon
+        polygon_edges = torch.cat([polygon_vertices, polygon_vertices[:1]], dim=0)
+
+        for i in range(len(polygon_edges) - 1):
+            # Calculate the vectors from each point to the edge endpoints
+            v1 = polygon_edges[i] - points
+            v2 = polygon_edges[i + 1] - points
+
+            # Calculate the cross product of v1 and v2
+            cross = v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]
+
+            # Check if the point is on the edge
+            on_edge = (v1[..., 0] == 0) & (v1[..., 1] >= 0) & (v2[..., 1] < 0)
+
+            # Check if the point is inside the polygon
+            inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | (
+                (v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0)
+            )
+
+            # Increment the count for points inside the polygon or on the edge
+            count += (inside | on_edge).int()
+
+    # If the count is odd, the point is inside at least one polygon
+    mask = count % 2 == 1
+
+    return mask
 
 
-def remove_duplicates(lst):
-    # Create an empty dictionary to store the result
-    result_dict = {}
-    # Iterate over each sublist in the main list
-    for sub_list in lst:
-        # Get the tail number of the sublist
-        tail_num = sub_list[-1]
-        # If the tail number already exists in the dictionary, compare the lengths of sublists
-        if tail_num in result_dict:
-            if len(sub_list) > len(result_dict[tail_num]):
-                result_dict[tail_num] = sub_list
-        # If the tail number doesn't exist in the dictionary, add the sublist to the dictionary
-        else:
-            result_dict[tail_num] = sub_list
-    # Return a list of all values (i.e., deduplicated sublists) from the dictionary
-    return list(result_dict.values())
+def right_perpendicular_unit_vector(vector):
+    # Check if the input is a 2D vector
+    assert vector.size(0) == 2, "Input must be a 2D vector"
+    # Extract the components of the vector
+    x, y = vector
+    # Compute the magnitude of the vector
+    magnitude = torch.sqrt(x**2 + y**2)
+    # Check if the vector is a zero vector
+    if magnitude == 0:
+        raise ValueError("Input cannot be a zero vector")
+    # Compute the right-hand perpendicular unit vector
+    unit_vector = torch.tensor([y, -x]) / magnitude
+    return unit_vector
 
 
-# Test code
-# lst = [[1, 2, 3], [4, 5, 6, 3], [7, 8, 9], [10, 11, 9]]
-# result = remove_duplicates(lst)
-# print(result)
-
-# def segments_merge2polygon(segments):
-#     start_segs = [seg for seg in segments if seg["start"] == True]
-#     all_traverse_list = []
-#     all_end_pairs = []
-#     all_start_pairs = []
-#     # for the corner start we need the prev info to mark all polygon
-#     for seg in start_segs:
-#         if "prev" in seg.keys():
-#             start_pair = [seg["id"], seg["prev"]]
-#             start_pair.sort()
-#             start_pair = tuple(start_pair)
-#         traverse_from_single, end_pairs_from_single = traverse_from_start(segments, seg)
-#         all_traverse_list.append(traverse_from_single)
-#         all_end_pairs.extend(end_pairs_from_single)
-#         all_start_pairs.append(start_pair)
-#     all_traverse_list = remove_duplicates(all_traverse_list)
-#     all_end_pairs = list(set(all_end_pairs))
-#     all_start_pairs = list(set(all_start_pairs))
-#     print(all_traverse_list)
-#     print(all_end_pairs)
-#     print(all_start_pairs)
-
-#     def get_sub_by_start(all_traverse_list, start_id):
-#         for sub in all_traverse_list:
-#             if sub[0] == start_id:
-#                 return sub
-#         raise ValueError("Start ID not found in the traverse list.")
-
-
-#     def is_true_ep(ep):
-#         if ep in all_end_pairs:
-#             return True
-#         else:
-#             return False
-
-#     def inside_fake_ep(ep, all_fake_eps):
-#         flattened_list = [item for tuple_pair in all_fake_eps for item in tuple_pair]
-#         if ep[0] in flattened_list and ep[1] in flattened_list:
-#             return True
-#         else:
-#             return False
-
-#     def get_ep_by_sp(sp):
-#         p0 = get_sub_by_start(all_traverse_list, sp[0])
-#         p1 = get_sub_by_start(all_traverse_list, sp[1])
-#         ep = [p0[-1], p1[-1]]
-#         ep.sort()
-#         ep = tuple(ep)
-#         return ep
-
-#     def get_fake_ep_by_ep(cur_ep, all_eps):
-#         # get fake_ep[0]
-#         # for all_ep in all_eps:
-#             # if all_ep[0] == cur_ep[0]:
-#                 # return all_ep
-#         fake_ep = [None, None]
-#         for i in range(len(cur_ep)):
-#             for ep in all_eps:
-#                 if ep[0] == cur_ep[i]:
-#                     fake_ep[i] = ep[1]
-#                     # print(f"remove ep: {ep}")
-#                     # all_eps.remove(ep)
-#                 if ep[1] == cur_ep[i]:
-#                     fake_ep[i] = ep[0]
-#                     # print(f"remove ep: {ep}")
-#                     # all_eps.remove(ep)
-#         fake_ep.sort()
-#         fake_ep = tuple(fake_ep)
-#         return fake_ep
-
-#     all_polygons = []
-#     def recursion_polygon(all_sps, all_eps, all_fake_eps = None, polygon_by_sp = None):
-#         print("*"*20, "program start", "*"*20)
-#         print(f"current all polygons: {all_polygons}")
-#         if polygon_by_sp is None:
-#             polygon_by_sp = []
-#         if all_fake_eps is None:
-#             all_fake_eps = []
-#         print(f"recursion level : {len(all_fake_eps)},\n all_sps: {all_sps}, all_eps: {all_eps},\n all_fake_eps: {all_fake_eps}")
-#         if len(all_sps) == 0:
-#             return
-#         while len(all_sps) > 0:
-#             for start_pair in all_sps:
-#                 # if the start_pair belongs to the original polygon
-#                 ep = get_ep_by_sp(start_pair)
-#                 print(f"sp: {start_pair}, -> ep: {ep}")
-#                 # the polygon ends here
-#                 if len(all_fake_eps) > 0:
-#                     print("in recursion, all_fake_eps > 0")
-#                     same_polygon = False
-#                     for tuple_pair in all_fake_eps:
-#                         if ep[0] in tuple_pair or ep[1] in tuple_pair:
-#                             same_polygon = True
-#                             break
-#                     if same_polygon:
-#                         print(f"same polygon: {start_pair}")
-#                         if inside_fake_ep(ep, all_fake_eps):
-#                             print(f"same polygon:,{ep} inside fake ep: {all_fake_eps}")
-#                             polygon_by_sp.append(start_pair)
-#                             all_sps.remove(start_pair)
-#                             print(f"all_sps after remove: {all_sps}")
-#                             all_polygons.append(polygon_by_sp)
-#                             polygon_by_sp = []
-#                             all_fake_eps = []
-#                         else:
-#                             print(f"same polygon,  {ep} NOT inside all fake ep:{all_fake_eps}")
-#                             fake_ep = get_fake_ep_by_ep(ep, all_eps)
-#                             print(f"generate fake ep: {fake_ep}")
-#                             all_fake_eps.append(fake_ep)
-#                             all_sps.remove(start_pair)
-#                             polygon_by_sp.append(start_pair)
-#                             print(f"all_sps after remove: {all_sps}")
-#                             print(f"all_fake_eps: {all_fake_eps}")
-#                             print(f"all true eps {all_eps}")
-#                             recursion_polygon(all_sps, all_eps, all_fake_eps, polygon_by_sp)
-#                     else:
-#                         print(f"NOT same polygon: {start_pair}")
-#                         continue
-#                 else:
-#                     if is_true_ep(ep):
-#                         polygon_by_sp.append(start_pair)
-#                         print(f"start_pair: {start_pair}")
-#                         all_sps.remove(start_pair)
-#                         print(f"all_sps after remove: {all_sps}")
-#                         print(f"true ep: {ep}")
-#                         all_polygons.append(polygon_by_sp)
-#                         polygon_by_sp = []
-#                         # all_eps.remove(ep)
-#                         if len(all_eps) == 0:
-#                             return
-#                         else:
-#                             recursion_polygon(all_sps, all_eps)
-#                     else:
-#                         print(f"not true ep: {ep}")
-#                         fake_ep = get_fake_ep_by_ep(ep, all_eps)
-#                         print(f"generate fake ep: {fake_ep}")
-#                         all_fake_eps.append(fake_ep)
-#                         all_sps.remove(start_pair)
-#                         polygon_by_sp.append(start_pair)
-#                         print(f"all_sps after remove: {all_sps}")
-#                         print(f"all_fake_eps: {all_fake_eps}")
-#                         recursion_polygon(all_sps, all_eps, all_fake_eps, polygon_by_sp)
-#     recursion_polygon(all_start_pairs, all_end_pairs)
-#     print(f"number of polygons: {len(all_polygons)}")
-#     print(all_polygons)
+# def edges_to_vertices(edges, polygon_ids):
+#     """
+#     Convert polygon edge representation to vertice representation
+#     Args:
+#     edges (torch.Tensor): Edge tensor of shape [N, 2, 2], where N is the number of edges,
+#                         2 represents the start and end points, and 2 represents 2-D coordinates (x, y)
+#     polygon_ids (torch.Tensor): Tensor of shape [N] containing polygon IDs for each edge
+#     Returns:
+#     vertices (torch.Tensor): Vertice tensor of shape [M, 2], where M is the total number of vertices,
+#                             and 2 represents 2-D coordinates (x, y)
+#     vertices_polygon_ids (torch.Tensor): Tensor of shape [M] containing polygon IDs for each vertex
+#     """
+#     # Get the unique polygon IDs
+#     unique_ids = torch.unique(polygon_ids)
+#     vertices_list = []
+#     vertices_polygon_ids_list = []
+#     # Iterate over each polygon ID
+#     for idx in unique_ids:
+#         # Get the edges corresponding to the current polygon ID
+#         polygon_edges = edges[polygon_ids == idx]
+#         # Flatten the polygon edges to shape [N*2, 2]
+#         flattened_edges = polygon_edges.view(-1, 2)
+#         # Remove duplicate vertices using torch.unique()
+#         vertices, inverse_indices = torch.unique(flattened_edges, dim=0, return_inverse=True)
+#         vertices_list.append(vertices)
+#         # Create polygon IDs for each vertex
+#         polygon_ids_for_vertices = torch.full((vertices.shape[0],), idx, dtype=polygon_ids.dtype)
+#         vertices_polygon_ids_list.append(polygon_ids_for_vertices)
+#     # Concatenate the vertices and polygon IDs from all polygons
+#     vertices = torch.cat(vertices_list, dim=0)
+#     vertices_polygon_ids = torch.cat(vertices_polygon_ids_list, dim=0)
+#     return vertices, vertices_polygon_ids
 
 
-#     return all_traverse_list
+# # import torch
+
+# def edges_to_vertices(edges, polygon_ids):
+#     """
+#     Convert polygon edge representation to vertice representation
+
+#     Args:
+#     edges (torch.Tensor): Edge tensor of shape [N, 2, 2], where N is the number of edges,
+#                           2 represents the start and end points, and 2 represents 2-D coordinates (x, y)
+#     polygon_ids (torch.Tensor): Tensor of shape [N] containing polygon IDs for each edge
+
+#     Returns:
+#     vertices (torch.Tensor): Vertice tensor of shape [M, 2], where M is the total number of vertices,
+#                              and 2 represents 2-D coordinates (x, y)
+#     vertices_polygon_ids (torch.Tensor): Tensor of shape [M] containing polygon IDs for each vertex
+#     """
+#     # Get the unique polygon IDs
+#     unique_ids = torch.unique(polygon_ids)
+
+#     vertices_list = []
+#     vertices_polygon_ids_list = []
+
+#     # Iterate over each polygon ID
+#     for idx in unique_ids:
+#         # Get the indices of edges corresponding to the current polygon ID
+#         polygon_edge_indices = torch.where(polygon_ids == idx)[0]
+
+#         # Get the edges corresponding to the current polygon ID
+#         polygon_edges = edges[polygon_edge_indices]
+
+#         # Flatten the polygon edges to shape [N*2, 2]
+#         flattened_edges = polygon_edges.view(-1, 2)
+
+#         # Remove duplicate vertices using torch.unique()
+#         vertices, inverse_indices = torch.unique(flattened_edges, dim=0, return_inverse=True)
+
+#         vertices_list.append(vertices)
+
+#         # Create polygon IDs for each vertex
+#         polygon_ids_for_vertices = torch.full((vertices.shape[0],), idx, dtype=polygon_ids.dtype)
+#         vertices_polygon_ids_list.append(polygon_ids_for_vertices)
+
+#     # Concatenate the vertices and polygon IDs from all polygons
+#     vertices = torch.cat(vertices_list, dim=0)
+#     vertices_polygon_ids = torch.cat(vertices_polygon_ids_list, dim=0)
+
+#     return vertices, vertices_polygon_ids
 
 
-def segments_merge2polygon(segments):
+# import torch
+
+# def edges_to_vertices(edges, polygon_ids):
+#     """
+#     Convert polygon edge representation to vertice representation
+
+#     Args:
+#     edges (torch.Tensor): Edge tensor of shape [N, 2, 2], where N is the number of edges,
+#                           2 represents the start and end points, and 2 represents 2-D coordinates (x, y)
+#     polygon_ids (torch.Tensor): Tensor of shape [N] containing polygon IDs for each edge
+
+#     Returns:
+#     vertices (torch.Tensor): Vertice tensor of shape [M, 2], where M is the total number of vertices,
+#                              and 2 represents 2-D coordinates (x, y)
+#     vertices_polygon_ids (torch.Tensor): Tensor of shape [M] containing polygon IDs for each vertex
+#     """
+#     # Get the unique polygon IDs
+#     unique_ids = torch.unique(polygon_ids)
+
+#     vertices_list = []
+#     vertices_polygon_ids_list = []
+
+#     # Iterate over each polygon ID
+#     for idx in unique_ids:
+#         # Get the indices of edges corresponding to the current polygon ID
+#         polygon_edge_indices = torch.where(polygon_ids == idx)[0]
+
+#         # Get the edges corresponding to the current polygon ID
+#         polygon_edges = edges[polygon_edge_indices]
+#         print(f"polygon_edges: {polygon_edges.shape}")
+#         print(polygon_edges)
+
+#         # Extract the start and end points of the edges
+#         start_points = polygon_edges[:,:, 0]
+#         print(f"start_points: {start_points.shape}")
+#         print(start_points)
+#         end_points = polygon_edges[:,:, 1]
+#         print(f"end_points: {end_points.shape}")
+#         print(end_points)
+
+#         # Concatenate the start and end points
+#         polygon_vertices = torch.cat([start_points, end_points], dim=0)
+
+#         # Remove duplicate vertices using torch.unique()
+#         vertices, inverse_indices = torch.unique(polygon_vertices, dim=0, return_inverse=True)
+
+#         vertices_list.append(vertices)
+
+#         # Create polygon IDs for each vertex
+#         polygon_ids_for_vertices = torch.full((vertices.shape[0],), idx, dtype=polygon_ids.dtype)
+#         vertices_polygon_ids_list.append(polygon_ids_for_vertices)
+
+#     # Concatenate the vertices and polygon IDs from all polygons
+#     vertices = torch.cat(vertices_list, dim=0)
+#     vertices_polygon_ids = torch.cat(vertices_polygon_ids_list, dim=0)
+
+#     return vertices, vertices_polygon_ids
+
+
+def edges_to_vertices(edges, polygon_ids):
+    """Convert polygon edge representation to vertice representation.
+
+    Args:
+    edges (torch.Tensor): Edge tensor of shape [N, 2, 2], where N is the number of edges,
+                          2 represents the start and end points, and 2 represents 2-D coordinates (x, y)
+    polygon_ids (torch.Tensor): Tensor of shape [N] containing polygon IDs for each edge
+
+    Returns:
+    vertices (torch.Tensor): Vertice tensor of shape [M, 2], where M is the total number of vertices,
+                             and 2 represents 2-D coordinates (x, y)
+    vertices_polygon_ids (torch.Tensor): Tensor of shape [M] containing polygon IDs for each vertex
+    """
+    # Get the unique polygon IDs
+    unique_ids = torch.unique(polygon_ids)
+
+    vertices_list = []
+    vertices_polygon_ids_list = []
+
+    # Iterate over each polygon ID
+    for idx in unique_ids:
+        # Get the indices of edges corresponding to the current polygon ID
+        polygon_edge_indices = torch.where(polygon_ids == idx)[0]
+        # Get the edges corresponding to the current polygon ID
+        polygon_edges = edges[polygon_edge_indices]
+
+        # Initialize the polygon vertices list with the start point of the first edge
+        polygon_vertices = []
+
+        # Iterate over the edges and add the end point of each edge to the polygon vertices list
+        for edge in polygon_edges:
+            polygon_vertices.append(edge[:, 0])
+
+        # Convert the polygon vertices list to a tensor
+        polygon_vertices = torch.stack(polygon_vertices)
+
+        vertices_list.append(polygon_vertices)
+
+        # Create polygon IDs for each vertex
+        polygon_ids_for_vertices = torch.full(
+            (polygon_vertices.shape[0],), idx, dtype=polygon_ids.dtype
+        )
+        vertices_polygon_ids_list.append(polygon_ids_for_vertices)
+
+    # Concatenate the vertices and polygon IDs from all polygons
+    vertices = torch.cat(vertices_list, dim=0)
+    vertices_polygon_ids = torch.cat(vertices_polygon_ids_list, dim=0)
+
+    return vertices, vertices_polygon_ids
+
+
+def edge_params_merge2mask(edge_params, metadata):
+    edge_params = edge_params.clone().detach()
+    img_shape = metadata["img_shape"]
+    polygon_ids = metadata["polygon_ids"]
+
+    vertices, vertices_polygon_ids = edges_to_vertices(edge_params, polygon_ids)
+    width, height = img_shape
+    binary_mask = create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, height)
+    binary_mask = binary_mask.float()
+    # plt.imshow(binary_mask.cpu().numpy())
+    # plt.show()
+    return binary_mask
+
+
+def segments_merge2polygon(poly_segments, width, height):
     # Get all segments with "start" flag
-    start_segs = [seg for seg in segments if seg["start"]]
-    all_traverse_list = []
-    all_end_pairs = []
-    all_start_pairs = []
 
-    for seg in start_segs:
-        # If segment has "prev" key, create a sorted tuple of current and previous segment IDs
-        if "prev" in seg:
-            start_pair = tuple(sorted([seg["id"], seg["prev"]]))
-        # Traverse from the current segment and get the traverse list and end pairs
-        traverse_from_single, end_pairs_from_single = traverse_from_start(segments, seg)
-        all_traverse_list.append(traverse_from_single)
-        all_end_pairs.extend(end_pairs_from_single)
-        all_start_pairs.append(start_pair)
+    def get_seg_by_id(poly, sid):
+        for seg in poly:
+            if seg["id"] == sid:
+                return seg
+        return None
 
-    # Remove duplicates from traverse list and convert end and start pairs to list of unique tuples
-    all_traverse_list = remove_duplicates(all_traverse_list)
-    all_end_pairs = list(set(all_end_pairs))
-    all_start_pairs = list(set(all_start_pairs))
+    # from edge to vertices
+    poly_vertices = []
+    for poly in poly_segments:
+        vertices = []
+        vertices.append(poly[0]["segment"][:, 0])
+        # now the corner edge don't know who is the next
+        for seg in poly:
+            if seg["end"] is not True:
+                next_id = seg["next"]
+                next_seg = get_seg_by_id(poly, next_id)
+                if not torch.equal(seg["segment"][:, 1], next_seg["segment"][:, 0]):
+                    # line is not continuous
+                    vertices.append(seg["segment"][:, 1])
+                    vertices.append(next_seg["segment"][:, 0])
+            else:
+                # the corner segment
+                vertices.append(seg["segment"][:, 1])
+        vertices = torch.stack(vertices).detach()
+        poly_vertices.append(vertices)
 
-    def get_sub_by_start(start_id):
-        # Get the traverse sublist with the given start ID
-        for sub in all_traverse_list:
-            if sub[0] == start_id:
-                return sub
-        raise ValueError("Start ID not found in the traverse list.")
-
-    def get_ep_by_sp(sp):
-        # Get the end pair corresponding to the given start pair
-        p0, p1 = get_sub_by_start(sp[0]), get_sub_by_start(sp[1])
-        return tuple(sorted([p0[-1], p1[-1]]))
-
-    def get_fake_ep(ep, all_eps):
-        # Get the fake end pair by replacing each end point with its corresponding fake end point
-        fake_ep = [None, None]
-        for i, e in enumerate(ep):
-            for ep2 in all_eps:
-                if e == ep2[0]:
-                    fake_ep[i] = ep2[1]
-                elif e == ep2[1]:
-                    fake_ep[i] = ep2[0]
-        return tuple(sorted(fake_ep))
-
-    all_polygons = []
-
-    def recursion_polygon(all_sps, all_eps, all_fake_eps=None, polygon_by_sp=None):
-        # Recursive function to find all polygons
-        if polygon_by_sp is None:
-            polygon_by_sp = []
-        if all_fake_eps is None:
-            all_fake_eps = []
-
-        while all_sps:
-            for start_pair in all_sps:
-                ep = get_ep_by_sp(start_pair)
-                if all_fake_eps:
-                    # If any end point is in fake end pairs
-                    if any(ep[0] in fp or ep[1] in fp for fp in all_fake_eps):
-                        # If both end points are in fake end pairs, complete the polygon
-                        if all(e in sum(all_fake_eps, ()) for e in ep):
-                            polygon_by_sp.append(start_pair)
-                            all_sps.remove(start_pair)
-                            all_polygons.append(polygon_by_sp)
-                            polygon_by_sp = []
-                            all_fake_eps = []
-                        else:
-                            # If not, get the fake end pair and continue recursion
-                            fake_ep = get_fake_ep(ep, all_eps)
-                            all_fake_eps.append(fake_ep)
-                            all_sps.remove(start_pair)
-                            polygon_by_sp.append(start_pair)
-                            recursion_polygon(all_sps, all_eps, all_fake_eps, polygon_by_sp)
-                else:
-                    # If end pair is in all end pairs, complete the polygon
-                    if ep in all_end_pairs:
-                        polygon_by_sp.append(start_pair)
-                        all_sps.remove(start_pair)
-                        all_polygons.append(polygon_by_sp)
-                        polygon_by_sp = []
-                        if not all_eps:
-                            return
-                        recursion_polygon(all_sps, all_eps)
-                    else:
-                        # If not, get the fake end pair and continue recursion
-                        fake_ep = get_fake_ep(ep, all_eps)
-                        all_fake_eps.append(fake_ep)
-                        all_sps.remove(start_pair)
-                        polygon_by_sp.append(start_pair)
-                        recursion_polygon(all_sps, all_eps, all_fake_eps, polygon_by_sp)
-
-    # Start recursion with all start pairs and end pairs
-    recursion_polygon(all_start_pairs, all_end_pairs)
-    print(f"number of polygons: {len(all_polygons)}")
-    print(all_polygons)
-    return all_traverse_list
+    binary_mask = create_binary_mask(poly_vertices, width=width, height=height)
+    plt.imshow(binary_mask.cpu().numpy())
+    plt.show()
+    return poly_vertices, binary_mask
 
 
 def get_segment_obj_byid(segments, seg_id):
@@ -869,30 +790,20 @@ def update_seg_next_byid(segment, cur_seg_id, next_id):
         raise ValueError("Segment ID not match in the list.")
 
 
-def validate_segments(segments):
-    """Validate the linked list of segments."""
-    start_segs = [seg for seg in segments if seg["start"] is True]
-    start_segs = [
-        {"id": seg["id"], "next": seg["next"], "type": seg["type"]} for seg in start_segs
-    ]
-    print("start_segs:")
-    print(start_segs)
+def validate_poly_edge_segments(polygon_edges_segments):
+    print(f"Total polygon: {len(polygon_edges_segments)}")
+    for pid, poly in enumerate(polygon_edges_segments):
+        for seg in poly:
+            if seg["next"] is not None:
+                last_id = seg["next"]
+            if not torch.equal(seg["segment"], torch.round(seg["segment"])):
+                print(f"{seg['id']} is not integer: {seg['segment']}")
 
-    end_segs = [seg for seg in segments if seg["end"] is True]
-    end_segs = [{"id": seg["id"], "next": seg["next"], "type": seg["type"]} for seg in end_segs]
-    print("end_segs:")
-    print(end_segs)
-
-    print(f"total segments: {len(segments)}")
-    ids = [seg["id"] for seg in segments]
-    assert len(ids) == len(set(ids)), "ID not unique"
-
-    none_ids = [seg["id"] for seg in segments if seg["next"] is None]
-    assert len(none_ids) == 0, "None next segment exists"
+        assert last_id == poly[-1]["id"], f"Last id {last_id} segment last {poly[-1]} not match"
 
 
 def visualize_segments_with_labels(
-    image, segments, only_start=False, only_end=False, seg_name=None
+    image, poly_segments, only_start=False, only_end=False, seg_name=None
 ):
     """Visualizes segments over an image, coloring them based on their type. Vertical segments are
     blue, horizontal segments are red, and corner segments are yellow.
@@ -918,41 +829,44 @@ def visualize_segments_with_labels(
         "CH": (255, 140, 0),  # Orange
     }
 
-    for seg_info in segments:
-        seg = seg_info["segment"]
-        seg_type = seg_info["type"]
-        seg_id = seg_info["id"]
-        is_start_seg = seg_info["start"]
-        is_end_seg = seg_info["end"]
-        if only_start and not is_start_seg:
-            continue
-        if only_end and not is_end_seg:
-            continue
-        color = color_map.get(seg_type, (255, 255, 255))  # Default to white if type unknown
-        start_point = (int(seg[1, 0].item()), int(seg[0, 0].item()))
-        end_point = (int(seg[1, 1].item()), int(seg[0, 1].item()))
-        mid_point = (
-            (start_point[0] + end_point[0]) // 2,
-            (start_point[1] + end_point[1]) // 2,
-        )
-        cv2.line(image, start_point, end_point, color, thickness=2)
-        cv2.circle(image, start_point, 3, color, -1)
-        cv2.circle(image, end_point, 3, color, -1)
-        cv2.putText(
-            image,
-            f"{seg_id}",
-            (mid_point[0], mid_point[1] + 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            color,
-            1,
-            cv2.LINE_AA,
-        )
+    for poly in poly_segments:
+        for seg_info in poly:
+            seg = seg_info["segment"]
+            seg_type = seg_info["type"]
+            seg_id = seg_info["id"]
+            is_start_seg = seg_info["start"]
+            is_end_seg = seg_info["end"]
+            if only_start and not is_start_seg:
+                continue
+            if only_end and not is_end_seg:
+                continue
+            color = color_map.get(seg_type, (255, 255, 255))  # Default to white if type unknown
+            # start_point = (int(seg[1, 0].item()), int(seg[0, 0].item()))
+            # end_point = (int(seg[1, 1].item()), int(seg[0, 1].item()))
+            start_point = tuple(seg[:, 0].detach().cpu().numpy().astype(int))
+            end_point = tuple(seg[:, 1].detach().cpu().numpy().astype(int))
+            mid_point = (
+                (start_point[0] + end_point[0]) // 2,
+                (start_point[1] + end_point[1]) // 2,
+            )
+            cv2.line(image, start_point, end_point, color, thickness=2)
+            cv2.circle(image, start_point, 3, color, -1)
+            cv2.circle(image, end_point, 3, color, -1)
+            cv2.putText(
+                image,
+                f"{seg_id}",
+                (mid_point[0], mid_point[1] + 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                color,
+                1,
+                cv2.LINE_AA,
+            )
 
     # Use Matplotlib to display the image
     plt.imshow(image)
     plt.axis("off")  # Hide axis
-    plt.title("Segmented Lines with Labels on Image")
+    # plt.title("Segmented Lines with Labels on Image")
     if seg_name:
         plt.savefig(seg_name, bbox_inches="tight", dpi=300)
     else:
@@ -1185,7 +1099,22 @@ def evaluate(mask, target, litho, scale=1, shots=False, verbose=False):
     return l2, pvb, epe, nshot
 
 
-# def seg_params2img(segs):
+def draw_edge_params(edge_params, shape):
+    image = torch.zeros(shape).to(device=DEVICE)
+    for edge in edge_params:
+        start_point = edge[:, 0].clone().detach().int()
+        end_point = edge[:, 1].clone().detach().int()
+
+        if start_point[1] == end_point[1]:  # horizontal
+            if start_point[0] > end_point[0]:
+                start_point, end_point = end_point, start_point
+            image[start_point[1], start_point[0] : end_point[0] + 1] = 255
+        else:
+            if start_point[1] > end_point[1]:  # vertical
+                start_point, end_point = end_point, start_point
+            image[start_point[1] : end_point[1] + 1, start_point[0]] = 255
+    plt.imshow(image.cpu().numpy())
+    plt.show()
 
 
 if __name__ == "__main__":
@@ -1202,37 +1131,102 @@ if __name__ == "__main__":
     # target = ref.mat(2048, 2048, 0, 0)
     for i in range(1, 2):
         maskfile = f"./benchmark/ICCAD2013/M1_test{i}.glp"
-        # maskfile = f"./benchmark/edge_bench/M1_part_test{i}.glp"
-        mask_shape = (1280, 1280)
         # maskfile = f"./benchmark/edge_bench/edge_test{i}.glp"
-        # mask_shape = (512, 512)
-        mref = glp.Design(maskfile, down=1)
-        mref.center(mask_shape[0], mask_shape[1], 0, 0)
-        mask = mref.mat(mask_shape[0], mask_shape[1], 0, 0)
-        mask_tensor = torch.tensor(mask, dtype=REALTYPE, device=DEVICE)
-        vposes, hposes, metadata = boundaries(mask_tensor)
-        print(metadata)
-        segs = segment_lines_with_labels(vposes, hposes, SEG_LENGTH)
-        segments_merge2polygon(segs)
-        # validate_segments(segs)
+        design = glp_seg.Design(maskfile)
+        shape = (2048, 2048)
+        offset = (512, 512)
+        target, edge_params, metadata = SegLoader.SegmentsInitTorch().run(
+            design, shape[0], shape[1], offset[0], offset[1]
+        )
+        # plt.imshow(target.cpu().numpy())
+        # plt.show()
+        direction_vectors = metadata["direction_vectors"]
+        velocities = metadata["velocities"]
+        print(edge_params[1])
+        print("dir", direction_vectors[1])
+        print("vel", velocities[1])
+        edge_params_1 = edge_params[1].clone().detach()
+        # edge_params_1 += velocities[1].T
+        # print(edge_params_1)
+        # edge_params_1 = edge_params_1.unsqueeze(0)
+        vel_1 = velocities[1]
+        vel_1 = vel_1 * 0.5
+        print("vel_1", vel_1)
+        print(edge_params_1)
+        print(edge_params_1 + vel_1)
+        velocities = velocities[:5]
+        averages = torch.randn(velocities.shape[0], 1, device=DEVICE)
+        averages = averages[:5].view(-1, 1, 1)
+        print(averages)
+        print(velocities)
+        print(averages * velocities)
+
+        # image = torch.zeros(shape).to(device=DEVICE)
+        # for edge in edge_params:
+        #     edge = edge.detach().cpu().numpy().astype(int)
+        #     start_point = tuple(edge[:, 0])
+        #     end_point = tuple(edge[:, 1])
+        #     image[start_point[0]:end_point[0], start_point[1], end_point[1]] = 1
+        # plt.imshow(image.cpu().numpy())
+        # plt.show()
+
+        # draw_edge_params(edge_params, shape)
+
+        # maskfile = f"./benchmark/edge_bench/M1_part_test{i}.glp"
+        # mask_shape = (1280, 1280)
+        # # maskfile = f"./benchmark/edge_bench/edge_test{i}.glp"
+        # # mask_shape = (512, 512)
+        # mref = glp_seg.Design(maskfile, down=1)
+        # mref.center(mask_shape[0], mask_shape[1], 0, 0)
+        # mask = mref.mat(mask_shape[0], mask_shape[1], 0, 0)
+        # mask_tensor = torch.tensor(mask, dtype=REALTYPE, device=DEVICE)
+        # # vposes, hposes, metadata = boundaries(mask_tensor)
+        # # print(metadata)
+        # mask_edges = mref.polygon_edges
+        # # print(mask_edges)
+        # # mask_edges_tensor = torch.tensor(mask_edges, dtype=REALTYPE, device=DEVICE)
+        # segs = segment_polygon_edges_with_labels(mask_edges, SEG_LENGTH)
+        # # validate_poly_edge_segments(segs)
+        # merged_polygons = segments_merge2polygon(segs, mask_shape[0], mask_shape[1])
+
+        # visual_seg2poly(segs, metadata)
         # seg_name = f"./tmp/segs/edge/edge_test{i}_seg_start.png"
-        # visualize_segments_with_labels(mask_tensor, segs, seg_name)
-        seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg.png"
-        visualize_segments_with_labels(
-            mask_tensor, segs, only_start=False, only_end=False, seg_name=seg_name
-        )
-        seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_start.png"
-        visualize_segments_with_labels(
-            mask_tensor, segs, only_start=True, only_end=False, seg_name=seg_name
-        )
-        seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_end.png"
-        visualize_segments_with_labels(
-            mask_tensor, segs, only_start=False, only_end=True, seg_name=seg_name
-        )
+        # visualize_segments_with_labels(mask_tensor, segs)
+        # seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg.png"
+        # visualize_segments_with_labels(
+        #     mask_tensor, segs, only_start=False, only_end=False, seg_name=seg_name
+        # )
+        # seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_start.png"
+        # visualize_segments_with_labels(
+        #     mask_tensor, segs, only_start=True, only_end=False, seg_name=seg_name
+        # )
+        # seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_end.png"
+        # visualize_segments_with_labels(
+        #     mask_tensor, segs, only_start=False, only_end=True, seg_name=seg_name
+        # )
 
         # seg_name = f"./tmp/segs/edge/M1_part_test{i}_seg.png"
-        # visualize_segments_with_labels(mask_tensor, segs, only_start=False, only_end=False, seg_name=seg_name)
+        # visualize_segments_with_labels(
+        #     mask_tensor, segs, only_start=False, only_end=False, seg_name=seg_name
+        # )
         # seg_name = f"./tmp/segs/edge/M1_part_test{i}_seg_start.png"
-        # visualize_segments_with_labels(mask_tensor, segs, only_start=True, only_end=False, seg_name=seg_name)
+        # visualize_segments_with_labels(
+        #     mask_tensor, segs, only_start=True, only_end=False, seg_name=seg_name
+        # )
         # seg_name = f"./tmp/segs/edge/M1_part_test{i}_seg_end.png"
-        # visualize_segments_with_labels(mask_tensor, segs, only_start=False, only_end=True, seg_name=seg_name)
+        # visualize_segments_with_labels(
+        #     mask_tensor, segs, only_start=False, only_end=True, seg_name=seg_name
+        # )
+
+        # seg_name = f"./tmp/segs/edge/edge_test{i}_seg.png"
+        # visualize_segments_with_labels(
+        #     mask_tensor, segs, only_start=False, only_end=False, seg_name=seg_name
+        # )
+        # seg_name = f"./tmp/segs/edge/edge_test{i}_seg_start.png"
+        # visualize_segments_with_labels(
+        #     mask_tensor, segs, only_start=True, only_end=False, seg_name=seg_name
+        # )
+        # seg_name = f"./tmp/segs/edge/edge_test{i}_seg_end.png"
+        # visualize_segments_with_labels(
+        #     mask_tensor, segs, only_start=False, only_end=True, seg_name=seg_name
+        # )

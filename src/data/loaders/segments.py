@@ -16,14 +16,12 @@ from src.data.datatype import COMPLEXTYPE, REALTYPE
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 # import pycommon.utils as common
-import src.data.loaders.glp as glp
+import src.data.loaders.glp_seg as glp_seg
 from src.litho.simple import LithoSim
 from src.opc.utils import (
     SEG_LENGTH,
-    boundaries,
-    segment_lines_with_labels,
-    validate_segments,
-    visualize_segments_with_labels,
+    right_perpendicular_unit_vector,
+    segment_polygon_edges_with_labels,
 )
 
 
@@ -33,30 +31,6 @@ class Initializer:
 
     def run(self, design, sizeX, sizeY, offsetX, offsetY, dtype=REALTYPE, device=DEVICE):
         pass
-
-
-class PlainInit(Initializer):
-    def __init__(self):
-        super().__init__()
-
-    def run(self, design, sizeX, sizeY, offsetX, offsetY, dtype=REALTYPE, device=DEVICE):
-        if isinstance(design, glp.Design):
-            design = design.mat(sizeX, sizeY, offsetX, offsetY)
-        target = torch.tensor(design, dtype=dtype, device=device)
-        params = target.clone()
-        return target, params
-
-
-class PixelInit(Initializer):
-    def __init__(self):
-        super().__init__()
-
-    def run(self, design, sizeX, sizeY, offsetX, offsetY, dtype=REALTYPE, device=DEVICE):
-        if isinstance(design, glp.Design):
-            design = design.mat(sizeX, sizeY, offsetX, offsetY)
-        target = torch.tensor(design, dtype=dtype, device=device)
-        params = target * 2.0 - 1.0
-        return target, params
 
 
 def _distMatPolygon(polygon, canvas, offsets):
@@ -240,129 +214,52 @@ class SegmentsInitTorch(Initializer):
         super().__init__()
 
     def run(self, design, sizeX, sizeY, offsetX, offsetY, dtype=REALTYPE, device=DEVICE):
+        design.center(sizeX, sizeY, offsetX, offsetY)
         target = torch.tensor(
             design.mat(sizeX, sizeY, offsetX, offsetY), dtype=dtype, device=device
         )
-        vposes, hposes = boundaries(target)
-        seg_params = segment_lines_with_labels(vposes, hposes, SEG_LENGTH)
-
-        return target, seg_params
-
-
-class LevelSetImageInitTrash(Initializer):
-    def __init__(self, kernelSize=3, iterations=1024):
-        super(LevelSetImageInit, self).__init__()
-        self._kernelSize = kernelSize
-        self._iterations = iterations
-
-    def run(
-        self,
-        design,
-        sizeX=None,
-        sizeY=None,
-        offsetX=None,
-        offsetY=None,
-        dtype=REALTYPE,
-        device=DEVICE,
-    ):
-        if isinstance(design, glp.Design):
-            design = design.mat(sizeX, sizeY, offsetX, offsetY)
-
-        target = (
-            torch.tensor(design, dtype=dtype, device=device)
-            if not isinstance(design, torch.Tensor)
-            else design.to(dtype).to(device)
-        )
-        kernel = torch.ones([1, 1, self._kernelSize, self._kernelSize], dtype=dtype, device=device)
-        # Divisor
-        divisor = func.conv2d(torch.ones_like(target)[None, None, :, :], kernel, padding="same")
-        # In-shape values
-        inshape = target.clone()[None, None, :, :]
-        mask = inshape.clone()
-        for idx in range(self._iterations):
-            conved = func.conv2d(mask, kernel, padding="same")
-            mask = torch.zeros_like(mask)
-            mask[torch.abs(conved - divisor) < 1e-3] = 1.0
-            inshape += mask
-            # print(f"In-shape: {torch.sum(mask).item()}, max: {torch.max(conved)}")
-            if torch.sum(mask) == 0:
-                break
-        inshape = -inshape
-        # Out-shape values
-        outshape = 1.0 - target.clone()[None, None, :, :]
-        mask = outshape.clone()
-        for idx in range(self._iterations):
-            conved = func.conv2d(mask, kernel, padding="same")
-            mask = torch.zeros_like(mask)
-            mask[torch.abs(conved - divisor) < 1e-3] = 1.0
-            outshape += mask
-            # print(f"Out-shape: {torch.sum(mask).item()}, max: {torch.max(conved)}")
-            if torch.sum(mask) == 0:
-                break
-
-        params = (inshape[0, 0] + outshape[0, 0]).detach().requires_grad_(True)
-        return target, params
-
-
-class LevelSetImageInit(Initializer):
-    def __init__(self):
-        super().__init__()
-        self._initializer = LevelSetInitTorch()
-
-    def run(self, design, sizeX, sizeY, offsetX, offsetY, dtype=REALTYPE, device=DEVICE):
-        if isinstance(design, glp.Design):
-            design = design.mat(sizeX, sizeY, offsetX, offsetY)
-        if isinstance(design, torch.Tensor):
-            design = design.detach().cpu().numpy()
-        target = design
-
-        polygons = []
-        contours, hierarchy = cv2.findContours(
-            design.astype(np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
-        )
-        for contour in contours:
-            contour = contour.reshape([-1, 2])
-            polygon = []
-            for idx in range(contour.shape[0]):
-                coord = list(contour[idx])
-                polygon.append(coord)
-            polygons.append(polygon)
-
-        design = glp.Design()
-        design._polygons = polygons
-
-        params = (
-            _distMatTorch(
-                design,
-                canvas=[[0, 0], [sizeX, sizeY]],
-                offsets=[offsetX, offsetY],
-                mask=target,
-            )
-            .detach()
-            .clone()
-            .requires_grad_(True)
-        )
-        target = torch.tensor(target, dtype=dtype, device=device)
-        return target, params
-        # return self._initializer.run(design, sizeX, sizeY, offsetX, offsetY, dtype=dtype, device=device)
+        target_edges = design.polygon_edges
+        seg_params = segment_polygon_edges_with_labels(target_edges, SEG_LENGTH)
+        edge_params = []
+        polygon_ids = []
+        direction_vectors = []
+        velocities = []
+        for idx, poly in enumerate(seg_params):
+            polygon_ids.append(torch.full((len(poly),), idx, dtype=torch.int32))
+            for seg in poly:
+                edge_params.append(seg["segment"].detach().clone())
+                direction_vectors.append(seg["direction"].detach().clone())
+                velocity = (
+                    right_perpendicular_unit_vector(seg["direction"])
+                    if seg["type"] in ["H", "V"]
+                    else torch.tensor([0, 0])
+                )
+                velocity = torch.stack([velocity, velocity], dim=0)
+                velocity = torch.transpose(velocity, 0, 1)
+                velocities.append(velocity.round().detach().clone())
+        edge_params = torch.stack(edge_params, dim=0).to(device).requires_grad_(True)
+        polygon_ids = torch.cat(polygon_ids, dim=0).to(device)
+        direction_vectors = torch.stack(direction_vectors, dim=0).to(device)
+        velocities = torch.stack(velocities, dim=0).to(device)
+        shape = (sizeX, sizeY)
+        assert polygon_ids.shape[0] == edge_params.shape[0]
+        assert polygon_ids.shape[0] == direction_vectors.shape[0]
+        assert edge_params.shape == velocities.shape
+        metadata = {
+            "img_shape": shape,
+            "polygon_ids": polygon_ids,
+            "direction_vectors": direction_vectors,
+            "velocities": velocities,
+        }
+        # print(edge_params[1])
+        # print(direction_vectors[1])
+        # print(velocities[1])
+        return target, edge_params, metadata
 
 
 if __name__ == "__main__":
-    ref = glp.Design("./benchmark/ICCAD2013/M1_test1.glp", down=1).mat(2048, 2048, 512, 512)
-    target, params = LevelSetImageInit().run(ref, 2048, 2048, 0, 0)
-
     import levelset as ilt
 
-    cfg = ilt.LevelSetCfg("./config/pylevelset.txt")
-    litho = LithoSim("./config/lithosimple.txt")
-    solver = ilt.LevelSetILT(cfg, litho)
-    l2, pvb, bestMask = solver.solve(target, params)
-
-    print(l2, pvb)
-    import matplotlib.pyplot as plt
-
-    plt.subplot(1, 2, 1)
-    plt.imshow(target)
-    plt.subplot(1, 2, 2)
-    plt.imshow(bestMask)
-    plt.show()
+    maskfile = "./benchmark/edge_bench/edge_test1.glp"
+    mask_shape = (512, 512)
+    mref = glp_seg.Design(maskfile, down=1)

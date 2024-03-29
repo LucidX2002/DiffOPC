@@ -2,9 +2,9 @@ Iterations: 50
 TargetDensity: 0.225
 SigmoidSteepness: 4.0
 WeightEPE: 0.5
-WeightPVBL2: 1.0
+WeightPVBL2: 0.1
 WeightPVBand: 0.0
-StepSize: 0.8
+StepSize: 1
 
 TileSizeX: 2048
 TileSizeY: 2048

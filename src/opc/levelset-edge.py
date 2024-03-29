@@ -17,19 +17,14 @@ from src.data.datatype import COMPLEXTYPE, REALTYPE
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
+from matplotlib import pyplot as plt
 from rich import print
 
-import src.data.loaders.glp as glp
+import src.data.loaders.glp_seg as glp_seg
 import src.data.loaders.segments as SegLoader
 import src.opc.evaluation as evaluation
 from src.litho.simple import LithoSim
-from src.opc.utils import (
-    SEG_LENGTH,
-    boundaries,
-    segment_lines_with_labels,
-    validate_segments,
-    visualize_segments_with_labels,
-)
+from src.opc.utils import edge_params_merge2mask
 from src.utils.utils import yaml2Cfg
 
 # import pylitho.exact as lithosim
@@ -94,22 +89,59 @@ def gradImage(image):
     return gradX.view(image.shape), gradY.view(image.shape)
 
 
-class _Binarize(torch.autograd.Function):
+def get_avg_grad(edge, grad_output):
+    start_point = edge[:, 0].clone().detach().int()
+    end_point = edge[:, 1].clone().detach().int()
+    if start_point[1] == end_point[1]:  # horizontal
+        if start_point[0] > end_point[0]:
+            start_point, end_point = end_point, start_point
+        selected_line = grad_output[start_point[1], start_point[0] : end_point[0] + 1]
+    else:
+        if start_point[1] > end_point[1]:  # vertical
+            start_point, end_point = end_point, start_point
+        selected_line = grad_output[start_point[1] : end_point[1] + 1, start_point[0]]
+    average_value = selected_line.mean()
+    return average_value
+
+
+class StraightThroughEstimator(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, levelset, seg_params):
-        params = [seg["segment"] for seg in seg_params]
-        ctx.save_for_backward(params)
-        ctx.seg_params = seg_params
-        mask = torch.zeros_like(levelset)
-        mask[levelset < 0] = 1.0
-        return mask
+    def forward(ctx, params):
+        # In the forward pass, round the parameters to the nearest integers
+        quantized = torch.round(params / 5) * 5
+        return quantized
 
     @staticmethod
     def backward(ctx, grad_output):
-        (levelset,) = ctx.saved_tensors
-        gradX, gradY = gradImage(levelset)
-        l2norm = torch.sqrt(gradX**2 + gradY**2)
-        return -l2norm * grad_output
+        # In the backward pass, directly pass the gradients
+        return grad_output
+
+
+class _Binarize(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, edge_params, metadata):
+        # ctx.seg_params = seg_params
+        ctx.save_for_backward(edge_params)
+        ctx.metadata_param = metadata
+        binary_mask = edge_params_merge2mask(edge_params, metadata)
+        return binary_mask
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        (edge_params,) = ctx.saved_tensors
+        metadata = ctx.metadata_param
+        polygon_ids = metadata["polygon_ids"]
+        direction_vectors = metadata["direction_vectors"]
+        velocities = metadata["velocities"]
+        average_values = []
+        for edge in edge_params:
+            average_value = get_avg_grad(edge, grad_output)
+            average_values.append(average_value)
+        average_values = torch.stack(average_values)
+        average_values = average_values.view(-1, 1, 1)
+        grad_edge_params = average_values * velocities
+
+        return grad_edge_params, None
 
 
 class Binarize(nn.Module):
@@ -117,8 +149,8 @@ class Binarize(nn.Module):
         super().__init__()
         pass
 
-    def forward(self, seg_params):
-        return _Binarize.apply(seg_params)
+    def forward(self, edge_params, metadata):
+        return _Binarize.apply(edge_params, metadata)
 
 
 # class _Rectangular(torch.autograd.Function):
@@ -151,8 +183,9 @@ class LevelSet(nn.Module):
         # self.add_module("binary", self._binarize)
         # self.add_module("lithosim", self._lithosim)
 
-    def forward(self, seg_params):
-        mask = self._binarize(seg_params)
+    def forward(self, edge_params, metadata):
+        edge_params = StraightThroughEstimator.apply(edge_params)
+        mask = self._binarize(edge_params, metadata)
         printedNom, printedMax, printedMin = self._lithosim(mask)
         return mask, printedNom, printedMax, printedMin
 
@@ -183,22 +216,27 @@ class EdgeILT:
             self._config["OffsetY"] : self._config["OffsetY"] + self._config["ILTSizeY"],
         ] = 1
 
-    def solve(self, target, seg_params, curv=None, verbose=0):
+    def solve(self, target, edge_params, metadata, curv=None, verbose=0):
         # Initialize
         # backup = params
         # params = params.clone().detach().requires_grad_(True)
 
         # Optimizer
         # opt = optim.SGD([params], lr=self._config["StepSize"])
-        params = [seg["segment"] for seg in seg_params]
-        opt = optim.Adam(params, lr=self._config["StepSize"])
+        opt = optim.Adam([edge_params], lr=self._config["StepSize"])
 
         # Optimization process
         lossMin, l2Min, pvbMin = 1e12, 1e12, 1e12
         bestParams = None
         bestMask = None
         for idx in range(self._config["Iterations"]):
-            mask, printedNom, printedMax, printedMin = self._levelset(params * self._filter)
+            mask, printedNom, printedMax, printedMin = self._levelset(edge_params, metadata)
+
+            # if idx%5 == 0:
+            #     mask_cpu = mask.clone().detach().cpu().numpy()
+            #     plt.imshow(mask_cpu)
+            #     plt.title(f"Iteration {idx}")
+            #     plt.show()
             l2loss = func.mse_loss(printedNom, target, reduction="sum")
             pvbl2 = func.mse_loss(printedMax, target, reduction="sum") + func.mse_loss(
                 printedMin, target, reduction="sum"
@@ -231,7 +269,7 @@ class EdgeILT:
 
             if bestParams is None or bestMask is None or loss.item() < lossMin:
                 lossMin, l2Min, pvbMin = loss.item(), l2loss.item(), pvband.item()
-                bestParams = params.detach().clone()
+                bestParams = edge_params.detach().clone()
                 bestMask = mask.detach().clone()
 
             opt.zero_grad()
@@ -260,20 +298,25 @@ def serial():
     lithoCfg = OmegaConf.to_container(lithoCfg, resolve=True, throw_on_missing=True)
     litho = LithoSim(lithoCfg)
     solver = EdgeILT(cfg, litho)
-    for idx in range(1, 2):
-        # design = glp.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=SCALE)
-        design = glp.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=SCALE)
-        design.center(cfg["TileSizeX"], cfg["TileSizeY"], cfg["OffsetX"], cfg["OffsetY"])
-        target, seg_params = SegLoader.SegmentsInitTorch().run(
+    for idx in range(2, 3):
+        design = glp_seg.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=SCALE)
+        # design = glp_seg.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=SCALE)
+        # design.center(cfg["TileSizeX"], cfg["TileSizeY"], cfg["OffsetX"], cfg["OffsetY"])
+        target, edge_params, metadata = SegLoader.SegmentsInitTorch().run(
             design, cfg["TileSizeX"], cfg["TileSizeY"], cfg["OffsetX"], cfg["OffsetY"]
         )
-        print(seg_params)
         begin = time.time()
-        l2, pvb, bestParams, bestMask = solver.solve(target, seg_params, curv=None, verbose=1)
+        # try:
+        l2, pvb, bestParams, bestMask = solver.solve(
+            target, edge_params, metadata, curv=None, verbose=1
+        )
+        # except Exception as e:
+        # print(f"Error in testcase {idx}")
+        # continue
         runtime = time.time() - begin
 
-        # ref = glp.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=1)
-        ref = glp.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=1)
+        # ref = glp_seg.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=1)
+        ref = glp_seg.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=1)
         ref.center(
             cfg["TileSizeX"] * SCALE,
             cfg["TileSizeY"] * SCALE,
