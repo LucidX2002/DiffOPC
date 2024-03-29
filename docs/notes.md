@@ -1,3 +1,14 @@
+## Mar 29
+
+- [ ] debug why it lose the rect shape
+- [ ] debug the vel vector
+- [ ] EPE loss
+- [ ] add video combiner
+- [ ] organize codes, add logging system
+- [ ] optimize the raycasting algorithm
+- [ ] test on more cases
+- [ ] comparison with previous code
+
 ## Raycasting-based algorithm
 
 The smallest set to recovery a mask
@@ -139,7 +150,9 @@ ______________________________________________________________________
 
 这是一个tensor表示的两条边：
 
-\[\[\[ 680.,  680.\],          \[1046., 1070.\]\],          \[\[ 680.,  680.\],          \[1070., 1110.\]\]\]
+```python
+[[[ 680.,  680.],          [1046., 1070.]],          [[ 680.,  680.],          [1070., 1110.]]]
+```
 
 ______________________________________________________________________
 
@@ -147,11 +160,25 @@ edge 的向量表示 \[N, 2, 2\] ,
 
 N个edge，2：起点和终点，2：2-D（x,y)
 
-\[\[x1,x2\],\[y1,y2\]\]
+```python
+[[x1,x2],[y1,y2]]
+```
 
 first edge:
 
-tensor(\[\[ 680.,  680.\],
-\[1070., 1110.\]\], device='cuda:0', grad_fn=<SelectBackward0>)
-dir: tensor(\[0., 1.\], device='cuda:0')
-vel: tensor(\[1., -0.\], device='cuda:0')
+```python
+tensor([[ 680.,  680.],
+[1070., 1110.]], device='cuda:0', grad_fn=<SelectBackward0>)
+dir: tensor([0., 1.], device='cuda:0')
+vel: tensor([1., -0.], device='cuda:0')
+```
+
+______________________________________________________________________
+
+Better edge view
+
+```python
+    print("edges")
+    edge_view = edges.clone().detach().transpose(1, 2)
+    print(edge_view)
+```

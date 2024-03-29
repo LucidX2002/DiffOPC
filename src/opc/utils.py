@@ -90,7 +90,6 @@ EPE_CONSTRAINT = 15
 EPE_CHECK_INTERVEL = 40
 MIN_EPE_CHECK_LENGTH = 80
 EPE_CHECK_START_INTERVEL = 40
-SEG_LENGTH = 100
 
 
 def boundaries(target, dtype=REALTYPE, device=DEVICE):
@@ -250,7 +249,7 @@ def visualizeBoundaries(target, vposes, hposes):
     plt.show()
 
 
-def segment_polygon_edges_with_labels(polygon_edges, seg_length=SEG_LENGTH, device="cpu"):
+def segment_polygon_edges_with_labels(polygon_edges, seg_length, device="cpu"):
     """Segments vertical and horizontal lines into smaller segments of a fixed length, labels
     vertical (V), horizontal (H), corner vertical (CV), and corner horizontal (CH) segments, and
     assigns a unique ID to each segment.
@@ -525,159 +524,17 @@ def right_perpendicular_unit_vector(vector):
     return unit_vector
 
 
-# def edges_to_vertices(edges, polygon_ids):
-#     """
-#     Convert polygon edge representation to vertice representation
-#     Args:
-#     edges (torch.Tensor): Edge tensor of shape [N, 2, 2], where N is the number of edges,
-#                         2 represents the start and end points, and 2 represents 2-D coordinates (x, y)
-#     polygon_ids (torch.Tensor): Tensor of shape [N] containing polygon IDs for each edge
-#     Returns:
-#     vertices (torch.Tensor): Vertice tensor of shape [M, 2], where M is the total number of vertices,
-#                             and 2 represents 2-D coordinates (x, y)
-#     vertices_polygon_ids (torch.Tensor): Tensor of shape [M] containing polygon IDs for each vertex
-#     """
-#     # Get the unique polygon IDs
-#     unique_ids = torch.unique(polygon_ids)
-#     vertices_list = []
-#     vertices_polygon_ids_list = []
-#     # Iterate over each polygon ID
-#     for idx in unique_ids:
-#         # Get the edges corresponding to the current polygon ID
-#         polygon_edges = edges[polygon_ids == idx]
-#         # Flatten the polygon edges to shape [N*2, 2]
-#         flattened_edges = polygon_edges.view(-1, 2)
-#         # Remove duplicate vertices using torch.unique()
-#         vertices, inverse_indices = torch.unique(flattened_edges, dim=0, return_inverse=True)
-#         vertices_list.append(vertices)
-#         # Create polygon IDs for each vertex
-#         polygon_ids_for_vertices = torch.full((vertices.shape[0],), idx, dtype=polygon_ids.dtype)
-#         vertices_polygon_ids_list.append(polygon_ids_for_vertices)
-#     # Concatenate the vertices and polygon IDs from all polygons
-#     vertices = torch.cat(vertices_list, dim=0)
-#     vertices_polygon_ids = torch.cat(vertices_polygon_ids_list, dim=0)
-#     return vertices, vertices_polygon_ids
-
-
-# # import torch
-
-# def edges_to_vertices(edges, polygon_ids):
-#     """
-#     Convert polygon edge representation to vertice representation
-
-#     Args:
-#     edges (torch.Tensor): Edge tensor of shape [N, 2, 2], where N is the number of edges,
-#                           2 represents the start and end points, and 2 represents 2-D coordinates (x, y)
-#     polygon_ids (torch.Tensor): Tensor of shape [N] containing polygon IDs for each edge
-
-#     Returns:
-#     vertices (torch.Tensor): Vertice tensor of shape [M, 2], where M is the total number of vertices,
-#                              and 2 represents 2-D coordinates (x, y)
-#     vertices_polygon_ids (torch.Tensor): Tensor of shape [M] containing polygon IDs for each vertex
-#     """
-#     # Get the unique polygon IDs
-#     unique_ids = torch.unique(polygon_ids)
-
-#     vertices_list = []
-#     vertices_polygon_ids_list = []
-
-#     # Iterate over each polygon ID
-#     for idx in unique_ids:
-#         # Get the indices of edges corresponding to the current polygon ID
-#         polygon_edge_indices = torch.where(polygon_ids == idx)[0]
-
-#         # Get the edges corresponding to the current polygon ID
-#         polygon_edges = edges[polygon_edge_indices]
-
-#         # Flatten the polygon edges to shape [N*2, 2]
-#         flattened_edges = polygon_edges.view(-1, 2)
-
-#         # Remove duplicate vertices using torch.unique()
-#         vertices, inverse_indices = torch.unique(flattened_edges, dim=0, return_inverse=True)
-
-#         vertices_list.append(vertices)
-
-#         # Create polygon IDs for each vertex
-#         polygon_ids_for_vertices = torch.full((vertices.shape[0],), idx, dtype=polygon_ids.dtype)
-#         vertices_polygon_ids_list.append(polygon_ids_for_vertices)
-
-#     # Concatenate the vertices and polygon IDs from all polygons
-#     vertices = torch.cat(vertices_list, dim=0)
-#     vertices_polygon_ids = torch.cat(vertices_polygon_ids_list, dim=0)
-
-#     return vertices, vertices_polygon_ids
-
-
-# import torch
-
-# def edges_to_vertices(edges, polygon_ids):
-#     """
-#     Convert polygon edge representation to vertice representation
-
-#     Args:
-#     edges (torch.Tensor): Edge tensor of shape [N, 2, 2], where N is the number of edges,
-#                           2 represents the start and end points, and 2 represents 2-D coordinates (x, y)
-#     polygon_ids (torch.Tensor): Tensor of shape [N] containing polygon IDs for each edge
-
-#     Returns:
-#     vertices (torch.Tensor): Vertice tensor of shape [M, 2], where M is the total number of vertices,
-#                              and 2 represents 2-D coordinates (x, y)
-#     vertices_polygon_ids (torch.Tensor): Tensor of shape [M] containing polygon IDs for each vertex
-#     """
-#     # Get the unique polygon IDs
-#     unique_ids = torch.unique(polygon_ids)
-
-#     vertices_list = []
-#     vertices_polygon_ids_list = []
-
-#     # Iterate over each polygon ID
-#     for idx in unique_ids:
-#         # Get the indices of edges corresponding to the current polygon ID
-#         polygon_edge_indices = torch.where(polygon_ids == idx)[0]
-
-#         # Get the edges corresponding to the current polygon ID
-#         polygon_edges = edges[polygon_edge_indices]
-#         print(f"polygon_edges: {polygon_edges.shape}")
-#         print(polygon_edges)
-
-#         # Extract the start and end points of the edges
-#         start_points = polygon_edges[:,:, 0]
-#         print(f"start_points: {start_points.shape}")
-#         print(start_points)
-#         end_points = polygon_edges[:,:, 1]
-#         print(f"end_points: {end_points.shape}")
-#         print(end_points)
-
-#         # Concatenate the start and end points
-#         polygon_vertices = torch.cat([start_points, end_points], dim=0)
-
-#         # Remove duplicate vertices using torch.unique()
-#         vertices, inverse_indices = torch.unique(polygon_vertices, dim=0, return_inverse=True)
-
-#         vertices_list.append(vertices)
-
-#         # Create polygon IDs for each vertex
-#         polygon_ids_for_vertices = torch.full((vertices.shape[0],), idx, dtype=polygon_ids.dtype)
-#         vertices_polygon_ids_list.append(polygon_ids_for_vertices)
-
-#     # Concatenate the vertices and polygon IDs from all polygons
-#     vertices = torch.cat(vertices_list, dim=0)
-#     vertices_polygon_ids = torch.cat(vertices_polygon_ids_list, dim=0)
-
-#     return vertices, vertices_polygon_ids
-
-
 def edges_to_vertices(edges, polygon_ids):
     """Convert polygon edge representation to vertice representation.
 
     Args:
     edges (torch.Tensor): Edge tensor of shape [N, 2, 2], where N is the number of edges,
-                          2 represents the start and end points, and 2 represents 2-D coordinates (x, y)
+                        2 represents the start and end points, and 2 represents 2-D coordinates (x, y)
     polygon_ids (torch.Tensor): Tensor of shape [N] containing polygon IDs for each edge
 
     Returns:
     vertices (torch.Tensor): Vertice tensor of shape [M, 2], where M is the total number of vertices,
-                             and 2 represents 2-D coordinates (x, y)
+                            and 2 represents 2-D coordinates (x, y)
     vertices_polygon_ids (torch.Tensor): Tensor of shape [M] containing polygon IDs for each vertex
     """
     # Get the unique polygon IDs
@@ -714,7 +571,6 @@ def edges_to_vertices(edges, polygon_ids):
     # Concatenate the vertices and polygon IDs from all polygons
     vertices = torch.cat(vertices_list, dim=0)
     vertices_polygon_ids = torch.cat(vertices_polygon_ids_list, dim=0)
-
     return vertices, vertices_polygon_ids
 
 
@@ -722,8 +578,11 @@ def edge_params_merge2mask(edge_params, metadata):
     edge_params = edge_params.clone().detach()
     img_shape = metadata["img_shape"]
     polygon_ids = metadata["polygon_ids"]
-
+    # print("*"*20)
+    # print(edge_params)
     vertices, vertices_polygon_ids = edges_to_vertices(edge_params, polygon_ids)
+    # print(vertices)
+    # print("*"*20)
     width, height = img_shape
     binary_mask = create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, height)
     binary_mask = binary_mask.float()
@@ -1099,9 +958,10 @@ def evaluate(mask, target, litho, scale=1, shots=False, verbose=False):
     return l2, pvb, epe, nshot
 
 
-def draw_edge_params(edge_params, shape):
+def draw_edge_params(edge_params, shape, show=True):
     image = torch.zeros(shape).to(device=DEVICE)
-    for edge in edge_params:
+    edge_params_clone = edge_params.clone().detach()
+    for edge in edge_params_clone:
         start_point = edge[:, 0].clone().detach().int()
         end_point = edge[:, 1].clone().detach().int()
 
@@ -1113,8 +973,10 @@ def draw_edge_params(edge_params, shape):
             if start_point[1] > end_point[1]:  # vertical
                 start_point, end_point = end_point, start_point
             image[start_point[1] : end_point[1] + 1, start_point[0]] = 255
-    plt.imshow(image.cpu().numpy())
-    plt.show()
+    if show:
+        plt.imshow(image.cpu().numpy())
+        plt.show()
+    return image.cpu().numpy()
 
 
 if __name__ == "__main__":

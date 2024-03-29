@@ -19,7 +19,6 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 import src.data.loaders.glp_seg as glp_seg
 from src.litho.simple import LithoSim
 from src.opc.utils import (
-    SEG_LENGTH,
     right_perpendicular_unit_vector,
     segment_polygon_edges_with_labels,
 )
@@ -213,13 +212,15 @@ class SegmentsInitTorch(Initializer):
     def __init__(self):
         super().__init__()
 
-    def run(self, design, sizeX, sizeY, offsetX, offsetY, dtype=REALTYPE, device=DEVICE):
+    def run(
+        self, design, sizeX, sizeY, offsetX, offsetY, seg_length, dtype=REALTYPE, device=DEVICE
+    ):
         design.center(sizeX, sizeY, offsetX, offsetY)
         target = torch.tensor(
             design.mat(sizeX, sizeY, offsetX, offsetY), dtype=dtype, device=device
         )
         target_edges = design.polygon_edges
-        seg_params = segment_polygon_edges_with_labels(target_edges, SEG_LENGTH)
+        seg_params = segment_polygon_edges_with_labels(target_edges, seg_length)
         edge_params = []
         polygon_ids = []
         direction_vectors = []

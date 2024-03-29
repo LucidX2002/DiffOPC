@@ -89,7 +89,6 @@ EPE_CONSTRAINT = 15
 EPE_CHECK_INTERVEL = 40
 MIN_EPE_CHECK_LENGTH = 80
 EPE_CHECK_START_INTERVEL = 40
-SEG_LENGTH = 40
 
 
 def boundaries(target, dtype=REALTYPE, device=DEVICE):
@@ -304,7 +303,7 @@ def segment_lines(lines, seg_length):
     return split_lines
 
 
-def segment_lines_with_labels(vposes, hposes, seg_length=SEG_LENGTH, device=DEVICE):
+def segment_lines_with_labels(vposes, hposes, seg_length, device=DEVICE):
     """Segments vertical and horizontal lines into smaller segments of a fixed length, labels
     vertical (V), horizontal (H), corner vertical (CV), and corner horizontal (CH) segments, and
     assigns a unique ID to each segment.
@@ -321,7 +320,6 @@ def segment_lines_with_labels(vposes, hposes, seg_length=SEG_LENGTH, device=DEVI
     """
 
     def split_edge(edge, seg_type_label, segment_id):
-        # seg_length = SEG_LENGTH
         midpoint = torch.mean(edge, dim=1)
         vector = edge[:, 1] - edge[:, 0]
         length = torch.norm(vector)
@@ -1347,7 +1345,8 @@ if __name__ == "__main__":
         mask_tensor = torch.tensor(mask, dtype=REALTYPE, device=DEVICE)
         vposes, hposes, metadata = boundaries(mask_tensor)
         print(metadata)
-        segs = segment_lines_with_labels(vposes, hposes, SEG_LENGTH)
+        seg_length = 40
+        segs = segment_lines_with_labels(vposes, hposes, seg_length)
         all_polygons_all_ids = segments_merge2polygon(segs)
 
         # visual_seg2poly(segs, metadata)

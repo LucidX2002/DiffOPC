@@ -17,6 +17,8 @@ from src.data.datatype import COMPLEXTYPE, REALTYPE
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
+from pathlib import Path
+
 from matplotlib import pyplot as plt
 from rich import print
 
@@ -24,7 +26,8 @@ import src.data.loaders.glp_seg as glp_seg
 import src.data.loaders.segments as SegLoader
 import src.opc.evaluation as evaluation
 from src.litho.simple import LithoSim
-from src.opc.utils import edge_params_merge2mask
+from src.opc.utils import draw_edge_params, edge_params_merge2mask
+from src.utils.debug_utils import torch_arr_bound
 from src.utils.utils import yaml2Cfg
 
 # import pylitho.exact as lithosim
@@ -80,15 +83,6 @@ class LevelSetCfg:
         return self._config[key]
 
 
-def gradImage(image):
-    GRAD_STEPSIZE = 1.0
-    image = image.view([-1, 1, image.shape[-2], image.shape[-1]])
-    padded = func.pad(image, (1, 1, 1, 1), mode="replicate")[:, 0].detach()
-    gradX = (padded[:, 2:, 1:-1] - padded[:, :-2, 1:-1]) / (2.0 * GRAD_STEPSIZE)
-    gradY = (padded[:, 1:-1, 2:] - padded[:, 1:-1, :-2]) / (2.0 * GRAD_STEPSIZE)
-    return gradX.view(image.shape), gradY.view(image.shape)
-
-
 def get_avg_grad(edge, grad_output):
     start_point = edge[:, 0].clone().detach().int()
     end_point = edge[:, 1].clone().detach().int()
@@ -108,7 +102,8 @@ class StraightThroughEstimator(torch.autograd.Function):
     @staticmethod
     def forward(ctx, params):
         # In the forward pass, round the parameters to the nearest integers
-        quantized = torch.round(params / 5) * 5
+        quantized = torch.round(params / 4) * 4
+        # quantized = torch.round(params)
         return quantized
 
     @staticmethod
@@ -184,7 +179,9 @@ class LevelSet(nn.Module):
         # self.add_module("lithosim", self._lithosim)
 
     def forward(self, edge_params, metadata):
+        # torch_arr_bound(edge_params, "edge_params before STE")
         edge_params = StraightThroughEstimator.apply(edge_params)
+        # torch_arr_bound(edge_params, "edge_params after STE")
         mask = self._binarize(edge_params, metadata)
         printedNom, printedMax, printedMin = self._lithosim(mask)
         return mask, printedNom, printedMax, printedMin
@@ -216,24 +213,33 @@ class EdgeILT:
             self._config["OffsetY"] : self._config["OffsetY"] + self._config["ILTSizeY"],
         ] = 1
 
-    def solve(self, target, edge_params, metadata, curv=None, verbose=0):
+    def solve(self, target, edge_params, metadata, case_id=1, curv=None, verbose=0):
         # Initialize
         # backup = params
         # params = params.clone().detach().requires_grad_(True)
 
         # Optimizer
-        # opt = optim.SGD([params], lr=self._config["StepSize"])
-        opt = optim.Adam([edge_params], lr=self._config["StepSize"])
+        opt = optim.SGD([edge_params], lr=self._config["StepSize"])
+        # opt = optim.Adam([edge_params], lr=self._config["StepSize"])
 
         # Optimization process
         lossMin, l2Min, pvbMin = 1e12, 1e12, 1e12
         bestParams = None
         bestMask = None
+        all_masks = []
+        all_mask_edges = []
         for idx in range(self._config["Iterations"]):
+            # print(f"EdgeILT Iteration {idx}")
+            # print(edge_params)
             mask, printedNom, printedMax, printedMin = self._levelset(edge_params, metadata)
 
-            # if idx%5 == 0:
-            #     mask_cpu = mask.clone().detach().cpu().numpy()
+            if idx % 5 == 0:
+                mask_cpu = mask.clone().detach().cpu().numpy()
+                all_masks.append({"mask": mask_cpu, "iteration": idx})
+                shape = (self._config["TileSizeX"], self._config["TileSizeY"])
+                mask_edge_cpu = draw_edge_params(edge_params, shape, show=False)
+                all_mask_edges.append({"mask": mask_edge_cpu, "iteration": idx})
+
             #     plt.imshow(mask_cpu)
             #     plt.title(f"Iteration {idx}")
             #     plt.show()
@@ -247,7 +253,7 @@ class EdgeILT:
                 != (printedMin >= self._config["TargetDensity"])
             )
             loss = (
-                l2loss
+                self._config["WeightL2"] * l2loss
                 + self._config["WeightPVBL2"] * pvbl2
                 + self._config["WeightPVBand"] * pvbloss
             )
@@ -276,6 +282,44 @@ class EdgeILT:
             loss.backward()
             opt.step()
 
+        if self._config["VISUAL_DEBUG"]:
+            fig, axs = plt.subplots(2, 4, figsize=(20, 12))
+            if len(all_masks) >= 8:
+                all_masks = all_masks[-8:]
+            for i, ax in enumerate(axs.flat):
+                if i < len(all_masks):
+                    ax.imshow(all_masks[i]["mask"])
+                    ax.set_title(f"Iteration {all_masks[i]['iteration']}")
+            plt.tight_layout()
+            save_dir = Path(f"./tmp/report/M1_test{case_id}")
+            save_dir.mkdir(parents=True, exist_ok=True)
+            plt.savefig(f"{str(save_dir)}/EdgeILT_M1_test{case_id}_mask.png", dpi=300)
+
+            for m in all_masks:
+                plt.imsave(
+                    f"{str(save_dir)}/EdgeILT_test{idx}_mask_{m['iteration']}.png",
+                    m["mask"],
+                    dpi=300,
+                )
+            # plt.show()
+
+            fig, axs = plt.subplots(2, 4, figsize=(20, 12))
+            if len(all_mask_edges) >= 8:
+                all_mask_edges = all_mask_edges[-8:]
+            for i, ax in enumerate(axs.flat):
+                if i < len(all_mask_edges):
+                    ax.imshow(all_mask_edges[i]["mask"])
+                    ax.set_title(f"Iteration {all_masks[i]['iteration']}")
+            plt.tight_layout()
+            plt.savefig(f"{str(save_dir)}/EdgeILT_M1_test{case_id}_edge.png", dpi=300)
+
+            for m in all_mask_edges:
+                plt.imsave(
+                    f"{str(save_dir)}/EdgeILT_test{idx}_edge_{m['iteration']}.png",
+                    m["mask"],
+                    dpi=300,
+                )
+            # plt.show()
         return l2Min, pvbMin, bestParams, bestMask
 
 
@@ -298,25 +342,30 @@ def serial():
     lithoCfg = OmegaConf.to_container(lithoCfg, resolve=True, throw_on_missing=True)
     litho = LithoSim(lithoCfg)
     solver = EdgeILT(cfg, litho)
-    for idx in range(2, 3):
+    for idx in range(1, 11):
         design = glp_seg.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=SCALE)
         # design = glp_seg.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=SCALE)
         # design.center(cfg["TileSizeX"], cfg["TileSizeY"], cfg["OffsetX"], cfg["OffsetY"])
         target, edge_params, metadata = SegLoader.SegmentsInitTorch().run(
-            design, cfg["TileSizeX"], cfg["TileSizeY"], cfg["OffsetX"], cfg["OffsetY"]
+            design,
+            cfg["TileSizeX"],
+            cfg["TileSizeY"],
+            cfg["OffsetX"],
+            cfg["OffsetY"],
+            cfg["SEG_LENGTH"],
         )
         begin = time.time()
         # try:
         l2, pvb, bestParams, bestMask = solver.solve(
-            target, edge_params, metadata, curv=None, verbose=1
+            target, edge_params, metadata, case_id=idx, curv=None, verbose=1
         )
         # except Exception as e:
         # print(f"Error in testcase {idx}")
         # continue
         runtime = time.time() - begin
 
-        # ref = glp_seg.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=1)
-        ref = glp_seg.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=1)
+        ref = glp_seg.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=1)
+        # ref = glp_seg.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=1)
         ref.center(
             cfg["TileSizeX"] * SCALE,
             cfg["TileSizeY"] * SCALE,
