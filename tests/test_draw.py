@@ -1,106 +1,14 @@
-polygon = [
-    [466.0, 896.0],
-    [466.0, 960.0],
-    [534.0, 636.0],
-    [534.0, 896.0],
-    [598.0, 636.0],
-    [598.0, 960.0],
-]
-
-
-polygon = [
-    [384.0, 449.0],
-    [384.0, 470.0],
-    [384.0, 492.0],
-    [384.0, 532.0],
-    [384.0, 554.0],
-    [384.0, 575.0],
-    [412.0, 449.0],
-    [412.0, 575.0],
-    [452.0, 449.0],
-    [452.0, 575.0],
-    [492.0, 449.0],
-    [492.0, 575.0],
-    [532.0, 449.0],
-    [532.0, 575.0],
-    [572.0, 449.0],
-    [572.0, 575.0],
-    [612.0, 449.0],
-    [612.0, 575.0],
-    [640.0, 449.0],
-    [640.0, 470.0],
-    [640.0, 492.0],
-    [640.0, 532.0],
-    [640.0, 554.0],
-    [640.0, 575.0],
-]
-
-polygon = [
-    [620.0, 870.0],
-    [630.0, 900.0],
-    [620.0, 920.0],
-    [620.0, 960.0],
-    [620.0, 1000.0],
-    [620.0, 1040.0],
-    [620.0, 1080.0],
-    [620.0, 1120.0],
-    [620.0, 1150.0],
-    [620.0, 1170.0],
-    [640.0, 1170.0],
-    [680.0, 1180.0],
-    [720.0, 1180.0],
-    [760.0, 1180.0],
-    [800.0, 1180.0],
-    [840.0, 1180.0],
-    [880.0, 1180.0],
-    [920.0, 1180.0],
-    [960.0, 1180.0],
-    [1000.0, 1180.0],
-    [1040.0, 1180.0],
-    [1080.0, 1180.0],
-    [1120.0, 1180.0],
-    [1160.0, 1180.0],
-    [1200.0, 1180.0],
-    [1240.0, 1180.0],
-    [1280.0, 1180.0],
-    [1320.0, 1170.0],
-    [1360.0, 1170.0],
-    [1400.0, 1170.0],
-    [1420.0, 1170.0],
-    [1420.0, 1150.0],
-    [1420.0, 1120.0],
-    [1430.0, 1080.0],
-    [1430.0, 1040.0],
-    [1430.0, 1000.0],
-    [1420.0, 960.0],
-    [1420.0, 920.0],
-    [1420.0, 900.0],
-    [1420.0, 870.0],
-    [1400.0, 880.0],
-    [1360.0, 870.0],
-    [1320.0, 870.0],
-    [1280.0, 870.0],
-    [1240.0, 870.0],
-    [1200.0, 860.0],
-    [1160.0, 860.0],
-    [1120.0, 860.0],
-    [1080.0, 860.0],
-    [1040.0, 860.0],
-    [1000.0, 860.0],
-    [960.0, 860.0],
-    [920.0, 860.0],
-    [880.0, 860.0],
-    [840.0, 860.0],
-    [800.0, 870.0],
-    [760.0, 870.0],
-    [720.0, 870.0],
-    [680.0, 880.0],
-    [640.0, 870.0],
-]
 import math
+import os
+import sys
 
 import cv2
 import numpy as np
+import torch
+from matplotlib import pyplot as plt
+
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from test_data import edges, vertice_polygon_ids, vertices
 
 
 def sort_polygon_vertices(vertices):
@@ -156,22 +64,34 @@ def draw_filled_polygon(image, vertices):
     return result
 
 
-# Create a blank 1000x1000 image
-blank_image = np.zeros((1280, 1280, 3), dtype=np.uint8)
+def draw_image_by_vertices(vertices, vertice_polygon_ids):
+    # Create a blank image
+    blank_image = np.zeros((2048, 2048, 3), dtype=np.int32)
 
-# Define the vertices of the polygon
-# vertices = [(100, 100), (500, 100), (500, 500), (100, 500)]
-vertices = polygon
-sorted_vertices = sort_polygon_vertices(vertices)
-print(sorted_vertices)
+    # Define the vertices of the polygon
+    # vertices = [(100, 100), (500, 100), (500, 500), (100, 500)]
+    unique_ids = torch.unique(vertice_polygon_ids)
 
-# Draw the filled polygon on the blank image
-# result_image = draw_filled_polygon(blank_image, sorted_vertices)
-result_image = cv2.fillPoly(
-    blank_image, [np.array(sorted_vertices, dtype=np.int32)], (255, 255, 255)
-)
+    for idx in unique_ids:
+        polygon_vertices = vertices[vertice_polygon_ids == idx]
+        if idx == 0:
+            print(polygon_vertices)
+            # Draw the filled polygon on the blank image
+            # result_image = draw_filled_polygon(blank_image, sorted_vertices)
+            blank_image = cv2.fillPoly(
+                blank_image, [polygon_vertices.numpy().astype(int)], (255, 255, 255)
+            )
 
-# Display the result
-cv2.imshow("Filled Polygon", result_image)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+    # Display the result
+    # cv2.imshow("Filled Polygon", result_image)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    plt.imshow(blank_image)
+    plt.show()
+
+
+if __name__ == "__main__":
+    vertices = torch.tensor(vertices)
+    edges = torch.tensor(edges)
+    vertice_polygon_ids = torch.tensor(vertice_polygon_ids)
+    draw_image_by_vertices(vertices, vertice_polygon_ids)

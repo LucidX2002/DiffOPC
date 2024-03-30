@@ -342,7 +342,7 @@ def serial():
     lithoCfg = OmegaConf.to_container(lithoCfg, resolve=True, throw_on_missing=True)
     litho = LithoSim(lithoCfg)
     solver = EdgeILT(cfg, litho)
-    for idx in range(1, 11):
+    for idx in range(1, 2):
         design = glp_seg.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=SCALE)
         # design = glp_seg.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=SCALE)
         # design.center(cfg["TileSizeX"], cfg["TileSizeY"], cfg["OffsetX"], cfg["OffsetY"])

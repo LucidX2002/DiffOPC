@@ -578,11 +578,14 @@ def edge_params_merge2mask(edge_params, metadata):
     edge_params = edge_params.clone().detach()
     img_shape = metadata["img_shape"]
     polygon_ids = metadata["polygon_ids"]
-    # print("*"*20)
-    # print(edge_params)
+    print(polygon_ids)
+    print("*" * 20)
+    print(edge_params)
     vertices, vertices_polygon_ids = edges_to_vertices(edge_params, polygon_ids)
-    # print(vertices)
-    # print("*"*20)
+    print("*" * 20)
+    print(vertices)
+    print("*" * 20)
+    print(vertices_polygon_ids)
     width, height = img_shape
     binary_mask = create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, height)
     binary_mask = binary_mask.float()
