@@ -357,7 +357,7 @@ def serial():
         begin = time.time()
         # try:
         l2, pvb, bestParams, bestMask = solver.solve(
-            target, edge_params, metadata, case_id=idx, curv=None, verbose=1
+            target, edge_params, metadata, case_id=idx, curv=None, verbose=cfg["VERBOSE"]
         )
         # except Exception as e:
         # print(f"Error in testcase {idx}")
