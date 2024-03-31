@@ -553,9 +553,16 @@ def edges_to_vertices(edges, polygon_ids):
         # Initialize the polygon vertices list with the start point of the first edge
         polygon_vertices = []
 
-        # Iterate over the edges and add the end point of each edge to the polygon vertices list
+        # Iterate over the edges and add unique vertices to the polygon vertices list
         for edge in polygon_edges:
-            polygon_vertices.append(edge[:, 0])
+            start_point = edge[:, 0]
+            end_point = edge[:, 1]
+
+            if len(polygon_vertices) == 0 or not torch.equal(start_point, polygon_vertices[-1]):
+                polygon_vertices.append(start_point)
+
+            if not torch.equal(end_point, polygon_vertices[-1]):
+                polygon_vertices.append(end_point)
 
         # Convert the polygon vertices list to a tensor
         polygon_vertices = torch.stack(polygon_vertices)
@@ -578,14 +585,7 @@ def edge_params_merge2mask(edge_params, metadata):
     edge_params = edge_params.clone().detach()
     img_shape = metadata["img_shape"]
     polygon_ids = metadata["polygon_ids"]
-    print(polygon_ids)
-    print("*" * 20)
-    print(edge_params)
     vertices, vertices_polygon_ids = edges_to_vertices(edge_params, polygon_ids)
-    print("*" * 20)
-    print(vertices)
-    print("*" * 20)
-    print(vertices_polygon_ids)
     width, height = img_shape
     binary_mask = create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, height)
     binary_mask = binary_mask.float()

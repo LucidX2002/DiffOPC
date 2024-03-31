@@ -27,7 +27,6 @@ import src.data.loaders.segments as SegLoader
 import src.opc.evaluation as evaluation
 from src.litho.simple import LithoSim
 from src.opc.utils import draw_edge_params, edge_params_merge2mask
-from src.utils.debug_utils import torch_arr_bound
 from src.utils.utils import yaml2Cfg
 
 # import pylitho.exact as lithosim
@@ -179,9 +178,7 @@ class LevelSet(nn.Module):
         # self.add_module("lithosim", self._lithosim)
 
     def forward(self, edge_params, metadata):
-        # torch_arr_bound(edge_params, "edge_params before STE")
         edge_params = StraightThroughEstimator.apply(edge_params)
-        # torch_arr_bound(edge_params, "edge_params after STE")
         mask = self._binarize(edge_params, metadata)
         printedNom, printedMax, printedMin = self._lithosim(mask)
         return mask, printedNom, printedMax, printedMin
