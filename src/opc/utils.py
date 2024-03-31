@@ -946,6 +946,152 @@ class ShotCounter:
         return len(rectangles)
 
 
+def find_intersection_and_adjust(line1, line2):
+    """Adjusts two perpendicular line segments (one vertical and one horizontal) to meet exactly at
+    their intersection point, ensuring that the start of the second line is the intersection point.
+    Returns the adjusted line segments and the coordinates of the intersection point.
+
+    Parameters:
+    - line1: torch.tensor representing the first line segment.
+    - line2: torch.tensor representing the second line segment.
+
+    Both line1 and line2 are 2x2 tensors, where the first row contains x coordinates
+    and the second row contains y coordinates of the line's start and end points, respectively.
+
+    Returns:
+    - Adjusted line segments as torch.tensors and the intersection point as a torch.tensor.
+    """
+    # Determine which line is vertical and which is horizontal
+    line1 = line1.clone().detach()
+    line2 = line2.clone().detach()
+    is_line1_vertical = line1[0, 0] == line1[0, 1]
+
+    # Extract vertical and horizontal lines
+    vertical_line = line1 if is_line1_vertical else line2
+    horizontal_line = line2 if is_line1_vertical else line1
+
+    # Find intersection point
+    intersection_x = vertical_line[0, 0]  # X-coordinate from the vertical line
+    intersection_y = horizontal_line[1, 0]  # Y-coordinate from the horizontal line
+    intersection_point = torch.tensor([intersection_x, intersection_y])
+
+    # Adjust lines to meet at the intersection point
+    if is_line1_vertical:
+        # Adjust line1 (vertical) end point to intersection
+        new_line1 = torch.tensor(
+            [[vertical_line[0, 0], vertical_line[0, 0]], [vertical_line[1, 0], intersection_y]]
+        )
+
+        # Adjust line2 (horizontal) start point to intersection
+        new_line2 = torch.tensor(
+            [
+                [intersection_x, horizontal_line[0, 1]],
+                [horizontal_line[1, 1], horizontal_line[1, 1]],
+            ]
+        )
+    else:
+        # Adjust line1 (horizontal) end point to intersection
+        new_line1 = torch.tensor(
+            [
+                [horizontal_line[0, 0], intersection_x],
+                [horizontal_line[1, 0], horizontal_line[1, 0]],
+            ]
+        )
+
+        # Adjust line2 (vertical) start point to intersection
+        new_line2 = torch.tensor(
+            [[vertical_line[0, 1], vertical_line[0, 1]], [intersection_y, vertical_line[1, 1]]]
+        )
+
+    # print(new_line1, '\n',  new_line2, '\n', intersection_point, '\n')
+    assert torch.equal(new_line1[:, 1], new_line2[:, 0])
+    assert torch.equal(intersection_point, new_line1[:, 1])
+    return new_line1, new_line2, intersection_point
+
+
+def adjust_corner_edges(edge_params, corner_edges):
+    """Adjusts the corner edges of a polygon represented by edge_params. The function assumes the
+    last edge and the first edge form a corner, and any other specified corner edges are adjacent.
+    The corner edges are specified by the corner_edges tensor.
+
+    Parameters:
+    - edge_params: torch.tensor of shape [N, 2, 2], representing N edges of a polygon,
+      where each edge is defined by two points (start and end), and each point has an x and y coordinate.
+    - corner_edges: torch.tensor of shape [N, 1], a binary tensor indicating which edges are corners
+      in addition to the implicit corner formed by the last and first edges.
+
+    Returns:
+    - Adjusted edge parameters as a torch.tensor of the same shape as edge_params.
+    """
+    # print(corner_edges)
+    N = edge_params.shape[0]  # Number of edges
+    adjusted_edges = edge_params.clone().detach()
+
+    # Adjust the last edge with the first edge to ensure they meet at a corner
+    adjusted_edges[-1], adjusted_edges[0], _ = find_intersection_and_adjust(
+        edge_params[-1], edge_params[0]
+    )
+
+    # Adjust other specified corner edges
+    i = 1
+    while i < N - 1:
+        if corner_edges[i]:
+            # Adjust this corner edge with the next edge
+            adjusted_edges[i], adjusted_edges[i + 1], _ = find_intersection_and_adjust(
+                edge_params[i], edge_params[i + 1]
+            )
+            i += 2
+        else:
+            i += 1
+
+    return adjusted_edges
+
+
+def adjust_edges_by_polygon(edge_params, corner_edges, polygon_ids):
+    """Adjusts the corner edges for multiple polygons. Each edge belongs to a polygon, and this
+    function processes each polygon separately.
+
+    Parameters:
+    - edge_params: torch.tensor of shape [N, 2, 2], representing N edges of polygons,
+    where each edge is defined by two points (start and end), and each point has an x and y coordinate.
+    - corner_edges: torch.tensor of shape [N, 1], a binary tensor indicating which edges are corners.
+    - polygon_ids: torch.tensor of shape [N, 1], indicating the polygon ID for each edge.
+
+    Returns:
+    - Adjusted edge parameters as a torch.tensor of the same shape as edge_params.
+    """
+    unique_polygons = polygon_ids.unique()
+    adjusted_edges = edge_params.clone().detach()
+
+    for poly_id in unique_polygons:
+        # Find edges belonging to the current polygon
+        poly_mask = (polygon_ids == poly_id).squeeze()
+        poly_edges = edge_params[poly_mask]
+        poly_corners = corner_edges[poly_mask]
+
+        # Adjust edges for this polygon
+        # NOTE: Insert the logic here for adjusting edges within a single polygon,
+        # using the function you have for adjusting corner edges. This is a placeholder
+        # and should be replaced with the actual logic you intend to use.
+        # print(f"polygon {poly_id}")
+        adjusted_poly_edges = adjust_corner_edges(
+            poly_edges, poly_corners
+        )  # This needs to be defined.
+
+        # Update the adjusted edges back into the main tensor
+        adjusted_edges[poly_mask] = adjusted_poly_edges
+
+    return adjusted_edges
+
+
+def adjust_corner_edge_params(edge_params, metadata):
+    edge_params = edge_params.clone().detach()
+    polygon_ids = metadata["polygon_ids"]
+    corner_ids = metadata["corner_ids"]
+    adjusted_edges = adjust_edges_by_polygon(edge_params, corner_ids, polygon_ids)
+    return adjusted_edges
+
+
 def evaluate(mask, target, litho, scale=1, shots=False, verbose=False):
     test = Basic(litho, 0.5)
     epeCheck = EPEChecker(litho, 0.5)

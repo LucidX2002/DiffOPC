@@ -225,23 +225,26 @@ class SegmentsInitTorch(Initializer):
         polygon_ids = []
         direction_vectors = []
         velocities = []
+        corner_ids = []
         for idx, poly in enumerate(seg_params):
             polygon_ids.append(torch.full((len(poly),), idx, dtype=torch.int32))
             for seg in poly:
                 edge_params.append(seg["segment"].detach().clone())
                 direction_vectors.append(seg["direction"].detach().clone())
-                velocity = (
-                    right_perpendicular_unit_vector(seg["direction"])
-                    if seg["type"] in ["H", "V"]
-                    else torch.tensor([0, 0])
-                )
+                # proceed to mark corners
+                corner = 1 if "C" in seg["type"] else 0
+                corner_ids.append(corner)
+                # proceed to calculate the velocity
+                velocity = right_perpendicular_unit_vector(seg["direction"])
                 velocity = torch.stack([velocity, velocity], dim=0)
                 velocity = torch.transpose(velocity, 0, 1)
                 velocities.append(velocity.round().detach().clone())
+
         edge_params = torch.stack(edge_params, dim=0).to(device).requires_grad_(True)
         polygon_ids = torch.cat(polygon_ids, dim=0).to(device)
         direction_vectors = torch.stack(direction_vectors, dim=0).to(device)
         velocities = torch.stack(velocities, dim=0).to(device)
+        corner_ids = torch.tensor(corner_ids, dtype=torch.int32, device=device)
         shape = (sizeX, sizeY)
         assert polygon_ids.shape[0] == edge_params.shape[0]
         assert polygon_ids.shape[0] == direction_vectors.shape[0]
@@ -251,10 +254,12 @@ class SegmentsInitTorch(Initializer):
             "polygon_ids": polygon_ids,
             "direction_vectors": direction_vectors,
             "velocities": velocities,
+            "corner_ids": corner_ids,
         }
-        # print(edge_params[1])
-        # print(direction_vectors[1])
-        # print(velocities[1])
+        # print(edge_params[0:5])
+        # print(direction_vectors[0:20])
+        # print(velocities[0:20])
+        # print(corner_ids[0:5])
         return target, edge_params, metadata
 
 

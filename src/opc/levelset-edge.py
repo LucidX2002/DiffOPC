@@ -26,7 +26,11 @@ import src.data.loaders.glp_seg as glp_seg
 import src.data.loaders.segments as SegLoader
 import src.opc.evaluation as evaluation
 from src.litho.simple import LithoSim
-from src.opc.utils import draw_edge_params, edge_params_merge2mask
+from src.opc.utils import (
+    adjust_corner_edge_params,
+    draw_edge_params,
+    edge_params_merge2mask,
+)
 from src.utils.utils import yaml2Cfg
 
 # import pylitho.exact as lithosim
@@ -101,7 +105,7 @@ class StraightThroughEstimator(torch.autograd.Function):
     @staticmethod
     def forward(ctx, params):
         # In the forward pass, round the parameters to the nearest integers
-        quantized = torch.round(params / 4) * 4
+        quantized = torch.round(params)
         # quantized = torch.round(params)
         return quantized
 
@@ -111,7 +115,7 @@ class StraightThroughEstimator(torch.autograd.Function):
         return grad_output
 
 
-class _Binarize(torch.autograd.Function):
+class Binarize(torch.autograd.Function):
     @staticmethod
     def forward(ctx, edge_params, metadata):
         # ctx.seg_params = seg_params
@@ -133,55 +137,37 @@ class _Binarize(torch.autograd.Function):
             average_values.append(average_value)
         average_values = torch.stack(average_values)
         average_values = average_values.view(-1, 1, 1)
-        grad_edge_params = average_values * velocities
-
+        grad_edge_params = -average_values * velocities
         return grad_edge_params, None
 
 
-class Binarize(nn.Module):
-    def __init__(self):
-        super().__init__()
-        pass
+class EdgeMerger(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, edge_params, metadata):
+        # In the forward pass, merge the edge corners.
+        edge_params = adjust_corner_edge_params(edge_params, metadata)
+        # quantized = torch.round(params)
+        return edge_params
 
-    def forward(self, edge_params, metadata):
-        return _Binarize.apply(edge_params, metadata)
-
-
-# class _Rectangular(torch.autograd.Function):
-#     @staticmethod
-#     def forward(ctx, mask, config):
-#         ctx.save_for_backward(mask)
-#         mask_rectangular = torch.zeros_like(mask)
-#         return mask
-
-#     @staticmethod
-#     def backward(ctx, grad_output):
-#         mask, = ctx.saved_tensors
-#         grad_mask = mask * grad_output
-#         return grad_mask, None
-
-# class Rectangular(nn.Module):
-#     def __init__(self, config):
-#         super().__init__()
-#         self._config = config
-
-#     def forward(self, mask):
-#         return _Rectangular.apply(mask, self._config)
+    @staticmethod
+    def backward(ctx, grad_output):
+        # In the backward pass, directly pass the gradients
+        return grad_output, None
 
 
 class LevelSet(nn.Module):
     def __init__(self, lithosim):
         super().__init__()
-        self._binarize = Binarize()
         self._lithosim = lithosim
         # self.add_module("binary", self._binarize)
         # self.add_module("lithosim", self._lithosim)
 
     def forward(self, edge_params, metadata):
         edge_params = StraightThroughEstimator.apply(edge_params)
-        mask = self._binarize(edge_params, metadata)
+        edge_params = EdgeMerger.apply(edge_params, metadata)
+        mask = Binarize.apply(edge_params, metadata)
         printedNom, printedMax, printedMin = self._lithosim(mask)
-        return mask, printedNom, printedMax, printedMin
+        return mask, printedNom, printedMax, printedMin, edge_params.clone().detach()
 
 
 class EdgeILT:
@@ -216,8 +202,8 @@ class EdgeILT:
         # params = params.clone().detach().requires_grad_(True)
 
         # Optimizer
-        opt = optim.SGD([edge_params], lr=self._config["StepSize"])
-        # opt = optim.Adam([edge_params], lr=self._config["StepSize"])
+        # opt = optim.SGD([edge_params], lr=self._config["StepSize"])
+        opt = optim.Adam([edge_params], lr=self._config["StepSize"])
 
         # Optimization process
         lossMin, l2Min, pvbMin = 1e12, 1e12, 1e12
@@ -228,13 +214,15 @@ class EdgeILT:
         for idx in range(self._config["Iterations"]):
             # print(f"EdgeILT Iteration {idx}")
             # print(edge_params)
-            mask, printedNom, printedMax, printedMin = self._levelset(edge_params, metadata)
+            mask, printedNom, printedMax, printedMin, edge_params_clone = self._levelset(
+                edge_params, metadata
+            )
 
             if idx % 5 == 0:
                 mask_cpu = mask.clone().detach().cpu().numpy()
                 all_masks.append({"mask": mask_cpu, "iteration": idx})
                 shape = (self._config["TileSizeX"], self._config["TileSizeY"])
-                mask_edge_cpu = draw_edge_params(edge_params, shape, show=False)
+                mask_edge_cpu = draw_edge_params(edge_params_clone, shape, show=False)
                 all_mask_edges.append({"mask": mask_edge_cpu, "iteration": idx})
 
             #     plt.imshow(mask_cpu)
@@ -272,7 +260,7 @@ class EdgeILT:
 
             if bestParams is None or bestMask is None or loss.item() < lossMin:
                 lossMin, l2Min, pvbMin = loss.item(), l2loss.item(), pvband.item()
-                bestParams = edge_params.detach().clone()
+                bestParams = edge_params_clone.clone().detach()
                 bestMask = mask.detach().clone()
 
             opt.zero_grad()
@@ -339,7 +327,7 @@ def serial():
     lithoCfg = OmegaConf.to_container(lithoCfg, resolve=True, throw_on_missing=True)
     litho = LithoSim(lithoCfg)
     solver = EdgeILT(cfg, litho)
-    for idx in range(1, 2):
+    for idx in range(10, 11):
         design = glp_seg.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=SCALE)
         # design = glp_seg.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=SCALE)
         # design.center(cfg["TileSizeX"], cfg["TileSizeY"], cfg["OffsetX"], cfg["OffsetY"])

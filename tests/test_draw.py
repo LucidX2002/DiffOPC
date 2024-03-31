@@ -144,11 +144,11 @@ def edges_to_vertices(edges, polygon_ids):
 
     Args:
         edges (torch.Tensor): Edge tensor of shape [N, 2, 2], where N is the number of edges,
-                              2 represents the start and end points, and 2 represents 2-D coordinates (x, y)
+                            2 represents the start and end points, and 2 represents 2-D coordinates (x, y)
         polygon_ids (torch.Tensor): Tensor of shape [N] containing polygon IDs for each edge
     Returns:
         vertices (torch.Tensor): Vertice tensor of shape [M, 2], where M is the total number of vertices,
-                                 and 2 represents 2-D coordinates (x, y)
+                                and 2 represents 2-D coordinates (x, y)
         vertices_polygon_ids (torch.Tensor): Tensor of shape [M] containing polygon IDs for each vertex
     """
     # Get the unique polygon IDs

@@ -1,3 +1,13 @@
+## Notes
+
+Some cases that the merge corner will fail.
+
+## The special corner
+
+```
+└┐
+```
+
 ## Mar 29
 
 - [ ] debug why it lose the rect shape

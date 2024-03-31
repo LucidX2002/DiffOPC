@@ -1,4 +1,4 @@
-Iterations: 20
+Iterations: 30
 TargetDensity: 0.225
 SigmoidSteepness: 4.0
 WeightEPE: 0.5
@@ -13,6 +13,6 @@ OffsetX: 512
 OffsetY: 512
 ILTSizeX: 1024
 ILTSizeY: 1024
-SEG_LENGTH: 40
+SEG_LENGTH: 60
 VISUAL_DEBUG: 1
 VERBOSE: 1
