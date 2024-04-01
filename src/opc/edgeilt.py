@@ -29,6 +29,7 @@ from src.litho.simple import LithoSim
 from src.opc.utils import (
     adjust_corner_edge_params,
     draw_edge_params,
+    draw_grad_map,
     edge_params_merge2mask,
 )
 from src.utils.utils import yaml2Cfg
@@ -36,7 +37,7 @@ from src.utils.utils import yaml2Cfg
 # import pylitho.exact as lithosim
 
 
-class LevelSetCfg:
+class EdgeILTCfg:
     def __init__(self, config):
         # Read the config from file or a given dict
         if isinstance(config, dict):
@@ -117,28 +118,31 @@ class StraightThroughEstimator(torch.autograd.Function):
 
 class Binarize(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, edge_params, metadata):
+    def forward(ctx, edge_params, metadata, iter_idx):
         # ctx.seg_params = seg_params
-        ctx.save_for_backward(edge_params)
         ctx.metadata_param = metadata
+        ctx.iter_idx = iter_idx
         binary_mask = edge_params_merge2mask(edge_params, metadata)
+        ctx.save_for_backward(edge_params, binary_mask)
         return binary_mask
 
     @staticmethod
     def backward(ctx, grad_output):
-        (edge_params,) = ctx.saved_tensors
+        (edge_params, binary_mask) = ctx.saved_tensors
         metadata = ctx.metadata_param
-        polygon_ids = metadata["polygon_ids"]
-        direction_vectors = metadata["direction_vectors"]
+        # polygon_ids = metadata["polygon_ids"]
+        # direction_vectors = metadata["direction_vectors"]
         velocities = metadata["velocities"]
         average_values = []
+        idx = ctx.iter_idx
+        # draw_grad_map(grad_output, binary_mask, idx=idx, show=False, save=True)
         for edge in edge_params:
             average_value = get_avg_grad(edge, grad_output)
             average_values.append(average_value)
         average_values = torch.stack(average_values)
         average_values = average_values.view(-1, 1, 1)
-        grad_edge_params = -average_values * velocities
-        return grad_edge_params, None
+        grad_edge_params = average_values * velocities
+        return grad_edge_params, None, None
 
 
 class EdgeMerger(torch.autograd.Function):
@@ -155,37 +159,32 @@ class EdgeMerger(torch.autograd.Function):
         return grad_output, None
 
 
-class LevelSet(nn.Module):
+class EdgeILT(nn.Module):
     def __init__(self, lithosim):
         super().__init__()
         self._lithosim = lithosim
         # self.add_module("binary", self._binarize)
         # self.add_module("lithosim", self._lithosim)
 
-    def forward(self, edge_params, metadata):
+    def forward(self, edge_params, metadata, iter_idx):
         edge_params = StraightThroughEstimator.apply(edge_params)
         edge_params = EdgeMerger.apply(edge_params, metadata)
-        mask = Binarize.apply(edge_params, metadata)
+        mask = Binarize.apply(edge_params, metadata, iter_idx)
         printedNom, printedMax, printedMin = self._lithosim(mask)
         return mask, printedNom, printedMax, printedMin, edge_params.clone().detach()
 
 
-class EdgeILT:
+class EdgeILTSolver:
     def __init__(
         self,
-        config=LevelSetCfg("./configs/opc/default.yaml"),
+        config=EdgeILTCfg("./configs/opc/default.yaml"),
         lithosim=LithoSim("./configs/litho/default.yaml"),
         device=DEVICE,
-        multigpu=False,
     ):
         super().__init__()
         self._config = config
         self._device = device
-        # LevelSet
-        self._levelset = LevelSet(lithosim).to(DEVICE)
-        if multigpu:
-            self._levelset = nn.DataParallel(self._levelset)
-        # Filter
+        self._edgeILT = EdgeILT(lithosim).to(self._device)
         self._filter = torch.zeros(
             [self._config["TileSizeX"], self._config["TileSizeY"]],
             dtype=REALTYPE,
@@ -198,8 +197,6 @@ class EdgeILT:
 
     def solve(self, target, edge_params, metadata, case_id=1, curv=None, verbose=0):
         # Initialize
-        # backup = params
-        # params = params.clone().detach().requires_grad_(True)
 
         # Optimizer
         # opt = optim.SGD([edge_params], lr=self._config["StepSize"])
@@ -213,9 +210,8 @@ class EdgeILT:
         all_mask_edges = []
         for idx in range(self._config["Iterations"]):
             # print(f"EdgeILT Iteration {idx}")
-            # print(edge_params)
-            mask, printedNom, printedMax, printedMin, edge_params_clone = self._levelset(
-                edge_params, metadata
+            mask, printedNom, printedMax, printedMin, edge_params_clone = self._edgeILT(
+                edge_params, metadata, idx
             )
 
             if idx % 5 == 0:
@@ -225,9 +221,6 @@ class EdgeILT:
                 mask_edge_cpu = draw_edge_params(edge_params_clone, shape, show=False)
                 all_mask_edges.append({"mask": mask_edge_cpu, "iteration": idx})
 
-            #     plt.imshow(mask_cpu)
-            #     plt.title(f"Iteration {idx}")
-            #     plt.show()
             l2loss = func.mse_loss(printedNom, target, reduction="sum")
             pvbl2 = func.mse_loss(printedMax, target, reduction="sum") + func.mse_loss(
                 printedMin, target, reduction="sum"
@@ -262,6 +255,7 @@ class EdgeILT:
                 lossMin, l2Min, pvbMin = loss.item(), l2loss.item(), pvband.item()
                 bestParams = edge_params_clone.clone().detach()
                 bestMask = mask.detach().clone()
+                bestMaskIter = idx
 
             opt.zero_grad()
             loss.backward()
@@ -305,7 +299,7 @@ class EdgeILT:
                     dpi=300,
                 )
             # plt.show()
-        return l2Min, pvbMin, bestParams, bestMask
+        return l2Min, pvbMin, bestParams, bestMask, bestMaskIter
 
 
 def serial():
@@ -319,15 +313,16 @@ def serial():
     runtimes = []
     targetsAll = []
     paramsAll = []
-    levelSetCfg = OmegaConf.load("./configs/opc/default.yaml")
-    levelSetCfg = OmegaConf.to_container(levelSetCfg, resolve=True, throw_on_missing=True)
-    cfg = LevelSetCfg(levelSetCfg)
+    edgeILTCfg = OmegaConf.load("./configs/opc/default.yaml")
+    edgeILTCfg = OmegaConf.to_container(edgeILTCfg, resolve=True, throw_on_missing=True)
+    cfg = EdgeILTCfg(edgeILTCfg)
 
     lithoCfg = OmegaConf.load("./configs/litho/default.yaml")
     lithoCfg = OmegaConf.to_container(lithoCfg, resolve=True, throw_on_missing=True)
     litho = LithoSim(lithoCfg)
-    solver = EdgeILT(cfg, litho)
-    for idx in range(10, 11):
+    solver = EdgeILTSolver(cfg, litho)
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    for idx in range(cfg["StartCase"], cfg["EndCase"]):
         design = glp_seg.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=SCALE)
         # design = glp_seg.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=SCALE)
         # design.center(cfg["TileSizeX"], cfg["TileSizeY"], cfg["OffsetX"], cfg["OffsetY"])
@@ -340,46 +335,33 @@ def serial():
             cfg["SEG_LENGTH"],
         )
         begin = time.time()
-        # try:
-        l2, pvb, bestParams, bestMask = solver.solve(
+        l2, pvb, bestParams, bestMask, bestMaskIter = solver.solve(
             target, edge_params, metadata, case_id=idx, curv=None, verbose=cfg["VERBOSE"]
         )
-        # except Exception as e:
-        # print(f"Error in testcase {idx}")
-        # continue
         runtime = time.time() - begin
+        print(f"SolveTime: {runtime:.2f}s")
+        if cfg["Evaluation"]:
+            l2, pvb, epe, shot = evaluation.evaluate(
+                bestMask, target, litho, device=device, scale=SCALE, shots=True
+            )
 
-        ref = glp_seg.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=1)
-        # ref = glp_seg.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=1)
-        ref.center(
-            cfg["TileSizeX"] * SCALE,
-            cfg["TileSizeY"] * SCALE,
-            cfg["OffsetX"] * SCALE,
-            cfg["OffsetY"] * SCALE,
-        )
-        target, params = SegLoader.LevelSetInitTorch().run(
-            ref,
-            cfg["TileSizeX"] * SCALE,
-            cfg["TileSizeY"] * SCALE,
-            cfg["OffsetX"] * SCALE,
-            cfg["OffsetY"] * SCALE,
-        )
-        l2, pvb, epe, shot = evaluation.evaluate(bestMask, target, litho, scale=SCALE, shots=True)
-        cv2.imwrite(f"./tmp/LevelSet_test{idx}.png", (bestMask * 255).detach().cpu().numpy())
+            cv2.imwrite(f"./tmp/EdgeILT_test{idx}.png", (bestMask * 255).detach().cpu().numpy())
 
+            print(
+                f"[Testcase {idx}]: L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {shot:.0f}; BestIter: {bestMaskIter} SolveTime: {runtime:.2f}s"
+            )
+
+            l2s.append(l2)
+            pvbs.append(pvb)
+            epes.append(epe)
+            shots.append(shot)
+            runtimes.append(runtime)
+        else:
+            print(f"Testcase {idx} finished.")
+    if cfg["Evaluation"]:
         print(
-            f"[Testcase {idx}]: L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {shot:.0f}; SolveTime: {runtime:.2f}s"
+            f"[Result]: L2 {np.mean(l2s):.0f}; PVBand {np.mean(pvbs):.0f}; EPE {np.mean(epes):.1f}; Shot {np.mean(shots):.1f}; SolveTime: {np.mean(runtimes):.2f}s"
         )
-
-        l2s.append(l2)
-        pvbs.append(pvb)
-        epes.append(epe)
-        shots.append(shot)
-        runtimes.append(runtime)
-
-    print(
-        f"[Result]: L2 {np.mean(l2s):.0f}; PVBand {np.mean(pvbs):.0f}; EPE {np.mean(epes):.1f}; Shot {np.mean(shots):.1f}; SolveTime: {np.mean(runtimes):.2f}s"
-    )
 
 
 if __name__ == "__main__":

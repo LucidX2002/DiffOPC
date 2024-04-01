@@ -281,7 +281,7 @@ def segment_polygon_edges_with_labels(polygon_edges, seg_length, device="cpu"):
         seg_type_label = "H" if is_horizontal else "V"
 
         segments = []
-        if length < seg_length:
+        if length < 2 * seg_length:
             # Treat both ends as corners if the segment is short
             seg_type_label = "C" + seg_type_label
             segments.extend(
@@ -1004,6 +1004,8 @@ def find_intersection_and_adjust(line1, line2):
         )
 
     # print(new_line1, '\n',  new_line2, '\n', intersection_point, '\n')
+    # print('line1', line1, '\n', 'line2', line2)
+    # print(new_line1, '\n', new_line2, '\n', intersection_point)
     assert torch.equal(new_line1[:, 1], new_line2[:, 0])
     assert torch.equal(intersection_point, new_line1[:, 1])
     return new_line1, new_line2, intersection_point
@@ -1024,6 +1026,7 @@ def adjust_corner_edges(edge_params, corner_edges):
     - Adjusted edge parameters as a torch.tensor of the same shape as edge_params.
     """
     # print(corner_edges)
+    # draw_edge_params(edge_params, (2048, 2048), show=True)
     N = edge_params.shape[0]  # Number of edges
     adjusted_edges = edge_params.clone().detach()
 
@@ -1105,6 +1108,21 @@ def evaluate(mask, target, litho, scale=1, shots=False, verbose=False):
         print(f"[{maskfile}]: L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {nshot:.0f}")
 
     return l2, pvb, epe, nshot
+
+
+def draw_grad_map(grad_map, binary_mask, idx=0, show=True, save=True):
+    grad_map_clone = grad_map.clone().detach()
+    binary_mask = binary_mask.clone().detach()
+    from src.utils.debug_utils import torch_arr_bound
+
+    torch_arr_bound(grad_map_clone, "grad_map")
+    masked_grad_map = torch.zeros_like(grad_map_clone)
+    masked_grad_map[binary_mask < 0.5] = grad_map_clone[binary_mask < 0.5]
+    if show:
+        plt.imshow(masked_grad_map.cpu().numpy())
+        plt.show()
+    if save:
+        plt.imsave(f"./tmp/grad/masked_grad_map_{idx}.png", masked_grad_map.cpu().numpy())
 
 
 def draw_edge_params(edge_params, shape, show=True):

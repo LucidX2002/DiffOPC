@@ -2,6 +2,19 @@
 
 Some cases that the merge corner will fail.
 
+Mar 31
+
+- [ ] SRAF insertion algorithm
+- [ ] logging system
+- [x] Debug why sometimes the edge can not be merged
+- [ ] Accelerate through offset region
+- [ ] Multi-level edge-ILT
+- [ ] STEP resize on the velocity vector.
+- [ ] EPE loss
+- [ ] organize codes, add logging system
+- [ ] comparison with previous code
+- \[ \]
+
 ## The special corner
 
 ```
@@ -10,14 +23,11 @@ Some cases that the merge corner will fail.
 
 ## Mar 29
 
-- [ ] debug why it lose the rect shape
-- [ ] debug the vel vector
-- [ ] EPE loss
-- [ ] add video combiner
-- [ ] organize codes, add logging system
-- [ ] optimize the raycasting algorithm
-- [ ] test on more cases
-- [ ] comparison with previous code
+- [x] debug why it lose the rect shape
+- [x] debug the vel vector
+- [x] add video combiner
+- [x] optimize the raycasting algorithm
+- [x] test on more cases
 
 ## Raycasting-based algorithm
 

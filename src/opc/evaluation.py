@@ -28,9 +28,9 @@ class Basic:
         thresh=0.5,
         device=DEVICE,
     ):
-        self._litho = litho
         self._thresh = thresh
         self._device = device
+        self._litho = litho.to(self._device)
 
     def run(self, mask, target, scale=1):
         if not isinstance(mask, torch.Tensor):
@@ -51,9 +51,10 @@ class Basic:
             binaryNom[printedNom >= self._thresh] = 1
             binaryMax[printedMax >= self._thresh] = 1
             binaryMin[printedMin >= self._thresh] = 1
-            l2loss = func.mse_loss(binaryNom, target, reduction="sum")
+            # l2loss = func.mse_loss(binaryNom, target, reduction="sum")
+            l2_val = (binaryNom - target).abs().sum()
             pvband = torch.sum(binaryMax != binaryMin)
-        return l2loss.item(), pvband.item()
+        return l2_val.item(), pvband.item()
 
     def sim(self, mask, target, scale=1):
         if not isinstance(mask, torch.Tensor):
@@ -364,8 +365,8 @@ class ShotCounter:
         return len(rectangles)
 
 
-def evaluate(mask, target, litho, scale=1, shots=False, verbose=False):
-    test = Basic(litho, 0.5)
+def evaluate(mask, target, litho, device, scale=1, shots=False, verbose=False):
+    test = Basic(litho, 0.5, device)
     epeCheck = EPEChecker(litho, 0.5)
     shotCount = ShotCounter(litho, 0.5)
 
