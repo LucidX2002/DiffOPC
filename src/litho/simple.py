@@ -6,11 +6,10 @@ sys.path.append(".")
 
 import torch
 import torch.nn as nn
+from omegaconf import DictConfig, OmegaConf
 
 from src.data.datatype import COMPLEXTYPE, REALTYPE
 from src.utils.utils import yaml2Cfg
-
-DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 # from pycommon.settings import *
 
@@ -21,16 +20,16 @@ class Kernel:
     def __init__(
         self,
         basedir="./kernel",
+        device="cuda",
         defocus=False,
         conjuncture=False,
         combo=False,
-        device=DEVICE,
     ):
+        self._device = device
         self._basedir = basedir
         self._defocus = defocus
         self._conjuncture = conjuncture
         self._combo = combo
-        self._device = device
 
         self._kernels = torch.load(self._kernel_file(), map_location=device).permute(2, 0, 1)
         self._scales = torch.load(self._scale_file(), map_location=device)
@@ -212,13 +211,18 @@ class _LithoSim(torch.autograd.Function):
 
 
 class LithoSim(nn.Module):  # Mask -> Aerial -> Printed
-    def __init__(self, config):
+    def __init__(self, litho_config, device):
         super().__init__()
         # Read the config from file or a given dict
-        if isinstance(config, dict):
-            self._config = config
-        elif isinstance(config, str):
-            self._config = yaml2Cfg(config)
+        if isinstance(litho_config, dict):
+            self._config = litho_config
+        elif isinstance(litho_config, str):
+            self._config = yaml2Cfg(config.litho_config)
+        elif isinstance(litho_config, DictConfig):
+            self._config = OmegaConf.to_container(
+                litho_config, resolve=True, throw_on_missing=True
+            )
+        self._device = device
         required = [
             "KernelDir",
             "KernelNum",
@@ -248,15 +252,25 @@ class LithoSim(nn.Module):  # Mask -> Aerial -> Printed
             self._config[key] = float(self._config[key])
         # Read the kernels
         self._kernels = {
-            "focus": Kernel(self._config["KernelDir"]),
-            "defocus": Kernel(self._config["KernelDir"], defocus=True),
-            "CT focus": Kernel(self._config["KernelDir"], conjuncture=True),
-            "CT defocus": Kernel(self._config["KernelDir"], defocus=True, conjuncture=True),
-            "combo focus": Kernel(self._config["KernelDir"], combo=True),
-            "combo defocus": Kernel(self._config["KernelDir"], defocus=True, combo=True),
-            "combo CT focus": Kernel(self._config["KernelDir"], conjuncture=True, combo=True),
+            "focus": Kernel(self._config["KernelDir"], device=self._device),
+            "defocus": Kernel(self._config["KernelDir"], device=self._device, defocus=True),
+            "CT focus": Kernel(self._config["KernelDir"], device=self._device, conjuncture=True),
+            "CT defocus": Kernel(
+                self._config["KernelDir"], device=self._device, defocus=True, conjuncture=True
+            ),
+            "combo focus": Kernel(self._config["KernelDir"], device=self._device, combo=True),
+            "combo defocus": Kernel(
+                self._config["KernelDir"], device=self._device, defocus=True, combo=True
+            ),
+            "combo CT focus": Kernel(
+                self._config["KernelDir"], device=self._device, conjuncture=True, combo=True
+            ),
             "combo CT defocus": Kernel(
-                self._config["KernelDir"], defocus=True, conjuncture=True, combo=True
+                self._config["KernelDir"],
+                device=self._device,
+                defocus=True,
+                conjuncture=True,
+                combo=True,
             ),
         }
         # for name, kernel in self._kernels.items():
@@ -318,9 +332,7 @@ class LithoSim(nn.Module):  # Mask -> Aerial -> Printed
 
 
 if __name__ == "__main__":
-    from omegaconf import OmegaConf
-
-    import src.data.loaders.glp as glp
+    import src.data.loaders.glp_seg as glp
 
     # Load the YAML file
     config = OmegaConf.load("./configs/litho/default.yaml")
@@ -332,7 +344,7 @@ if __name__ == "__main__":
 
     lithosim = LithoSim(config_dict)
     image = glp.Design("./benchmark/ICCAD2013/M1_test1.glp").image()
-    image = torch.tensor(image > 0.0, dtype=REALTYPE, device=DEVICE)
+    image = torch.tensor(image > 0.0, dtype=REALTYPE, device="cuda")
     printed = lithosim(image)
 
     import matplotlib.pyplot as plt

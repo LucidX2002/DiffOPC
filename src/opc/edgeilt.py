@@ -1,10 +1,8 @@
-import math
-import multiprocessing as mp
-import os
 import sys
 
 sys.path.append(".")
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -12,24 +10,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as func
 import torch.optim as optim
-
-from src.data.datatype import COMPLEXTYPE, REALTYPE
-
-DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
-from pathlib import Path
-
 from matplotlib import pyplot as plt
+from omegaconf import DictConfig, OmegaConf
 from rich import print
 
 import src.data.loaders.glp_seg as glp_seg
 import src.data.loaders.segments as SegLoader
 import src.opc.evaluation as evaluation
+from src.data.datatype import REALTYPE
 from src.litho.simple import LithoSim
 from src.opc.utils import (
     adjust_corner_edge_params,
     draw_edge_params,
-    draw_grad_map,
     edge_params_merge2mask,
 )
 from src.utils.utils import yaml2Cfg
@@ -44,6 +36,9 @@ class EdgeILTCfg:
             self._config = config
         elif isinstance(config, str):
             self._config = yaml2Cfg(config)
+        elif isinstance(config, DictConfig):
+            self._config = OmegaConf.to_container(config, resolve=True, throw_on_missing=True)
+
         required = [
             "Iterations",
             "TargetDensity",
@@ -177,9 +172,9 @@ class EdgeILT(nn.Module):
 class EdgeILTSolver:
     def __init__(
         self,
-        config=EdgeILTCfg("./configs/opc/default.yaml"),
-        lithosim=LithoSim("./configs/litho/default.yaml"),
-        device=DEVICE,
+        config: EdgeILTCfg,
+        lithosim: LithoSim,
+        device: torch.device,
     ):
         super().__init__()
         self._config = config
@@ -243,7 +238,7 @@ class EdgeILTSolver:
                         [-1.0 / 16, 5.0 / 16, -1.0 / 16],
                     ],
                     dtype=REALTYPE,
-                    device=DEVICE,
+                    device=edge_params.device,
                 )
                 curvature = func.conv2d(mask[None, None, :, :], kernelCurv[None, None, :, :])[0, 0]
                 losscurv = func.mse_loss(curvature, torch.zeros_like(curvature), reduction="sum")
@@ -313,15 +308,14 @@ def serial():
     runtimes = []
     targetsAll = []
     paramsAll = []
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     edgeILTCfg = OmegaConf.load("./configs/opc/default.yaml")
     edgeILTCfg = OmegaConf.to_container(edgeILTCfg, resolve=True, throw_on_missing=True)
     cfg = EdgeILTCfg(edgeILTCfg)
 
     lithoCfg = OmegaConf.load("./configs/litho/default.yaml")
-    lithoCfg = OmegaConf.to_container(lithoCfg, resolve=True, throw_on_missing=True)
-    litho = LithoSim(lithoCfg)
-    solver = EdgeILTSolver(cfg, litho)
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    litho = LithoSim(lithoCfg.litho_config, device)
+    solver = EdgeILTSolver(cfg, litho, device)
     for idx in range(cfg["StartCase"], cfg["EndCase"]):
         design = glp_seg.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=SCALE)
         # design = glp_seg.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=SCALE)

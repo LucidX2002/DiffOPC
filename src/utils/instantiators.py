@@ -6,7 +6,7 @@ from omegaconf import DictConfig
 
 from src.utils import pylogger
 
-log = pylogger.RankedLogger(__name__, rank_zero_only=True)
+log = pylogger.RankedLogger(__name__)
 
 
 def instantiate_loggers(logger_cfg: DictConfig) -> List[Logger]:

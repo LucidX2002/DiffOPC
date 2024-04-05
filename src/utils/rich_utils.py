@@ -5,22 +5,21 @@ import rich
 import rich.syntax
 import rich.tree
 from hydra.core.hydra_config import HydraConfig
-from lightning_utilities.core.rank_zero import rank_zero_only
 from omegaconf import DictConfig, OmegaConf, open_dict
 from rich.prompt import Prompt
 
 from src.utils import pylogger
 
-log = pylogger.RankedLogger(__name__, rank_zero_only=True)
+log = pylogger.RankedLogger(__name__)
 
 
-@rank_zero_only
 def print_config_tree(
     cfg: DictConfig,
     print_order: Sequence[str] = (
+        "litho",
+        "solver",
         "data",
         "model",
-        "callbacks",
         "logger",
         "trainer",
         "paths",
@@ -74,7 +73,6 @@ def print_config_tree(
             rich.print(tree, file=file)
 
 
-@rank_zero_only
 def enforce_tags(cfg: DictConfig, save_to_file: bool = False) -> None:
     """Prompts user to input tags from command line if no tags are provided in config.
 

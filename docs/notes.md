@@ -1,5 +1,14 @@
 ## Notes
 
+Apr 1st
+
+- case 4 wrong
+- case 10 wrong
+
+Add Offset region to accelerate the computation.
+
+______________________________________________________________________
+
 Some cases that the merge corner will fail.
 
 Mar 31

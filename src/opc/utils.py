@@ -12,15 +12,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as func
 import torch.optim as optim
-
-import src.data.loaders.segments as SegLoader
-from src.data.datatype import COMPLEXTYPE, INTTYPE, REALTYPE
-
-DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
 from kornia.utils import draw_convex_polygon
 from rich import print
 
+import src.data.loaders.segments as SegLoader
+from src.data.datatype import COMPLEXTYPE, INTTYPE, REALTYPE
 from src.data.loaders import glp_seg
 
 # import pylitho.simple as lithosim
@@ -31,9 +27,9 @@ from src.litho.simple import LithoSim
 class Basic:
     def __init__(
         self,
-        litho=LithoSim("./configs/litho/default.yaml"),
+        litho: LithoSim,
+        device: torch.device,
         thresh=0.5,
-        device=DEVICE,
     ):
         self._litho = litho
         self._thresh = thresh
@@ -92,7 +88,7 @@ MIN_EPE_CHECK_LENGTH = 80
 EPE_CHECK_START_INTERVEL = 40
 
 
-def boundaries(target, dtype=REALTYPE, device=DEVICE):
+def boundaries(target):
     """Get the target boundaries lines.
 
     input: binary image tensor: (b, c, x, y), torch.tensor
@@ -281,9 +277,9 @@ def segment_polygon_edges_with_labels(polygon_edges, seg_length, device="cpu"):
         seg_type_label = "H" if is_horizontal else "V"
 
         segments = []
-        if length < 2 * seg_length:
+        if length <= 2 * seg_length:
             # Treat both ends as corners if the segment is short
-            seg_type_label = "C" + seg_type_label
+            # seg_type_label = "C" + seg_type_label
             segments.extend(
                 create_segment(
                     edge[:, 0], midpoint, seg_type_label, segment_id, True, False, direction
@@ -665,7 +661,13 @@ def validate_poly_edge_segments(polygon_edges_segments):
 
 
 def visualize_segments_with_labels(
-    image, poly_segments, only_start=False, only_end=False, seg_name=None
+    image,
+    poly_segments,
+    only_start=False,
+    only_end=False,
+    seg_name=None,
+    velocities=None,
+    show_id=False,
 ):
     """Visualizes segments over an image, coloring them based on their type. Vertical segments are
     blue, horizontal segments are red, and corner segments are yellow.
@@ -677,7 +679,7 @@ def visualize_segments_with_labels(
                         'type' (string label of the segment type), and 'id' (unique identifier).
     """
     if torch.is_tensor(image):
-        image = image.cpu().numpy()
+        image = image.cpu().numpy() * 255
     # Convert the image to RGB if it is grayscale for colored line drawing
     if len(image.shape) == 2 or image.shape[2] == 1:
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
@@ -711,24 +713,55 @@ def visualize_segments_with_labels(
                 (start_point[0] + end_point[0]) // 2,
                 (start_point[1] + end_point[1]) // 2,
             )
-            cv2.line(image, start_point, end_point, color, thickness=2)
+            # print(f"mid_point: {mid_point}")
+            # cv2.line(image, start_point, end_point, color, thickness=2)
+            cv2.arrowedLine(
+                image,
+                start_point,
+                end_point,
+                color,
+                thickness=2,
+                line_type=cv2.LINE_AA,
+                shift=0,
+                tipLength=0.2,
+            )
             cv2.circle(image, start_point, 3, color, -1)
             cv2.circle(image, end_point, 3, color, -1)
-            cv2.putText(
-                image,
-                f"{seg_id}",
-                (mid_point[0], mid_point[1] + 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                color,
-                1,
-                cv2.LINE_AA,
-            )
+            if show_id:
+                cv2.putText(
+                    image,
+                    f"{seg_id}",
+                    (mid_point[0], mid_point[1] + 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    color,
+                    1,
+                    cv2.LINE_AA,
+                )
+            if velocities is not None:
+                vel = velocities[seg_id][:, 0]
+                # print(f"vel: {vel}")
+                vel_l = 15
+                mid_end_point = (
+                    mid_point[0] + int(vel[0].item()) * vel_l,
+                    mid_point[1] + int(vel[1].item()) * vel_l,
+                )
+                cv2.arrowedLine(
+                    image,
+                    mid_point,
+                    mid_end_point,
+                    color,
+                    thickness=1,
+                    line_type=cv2.LINE_AA,
+                    shift=0,
+                    tipLength=0.5,
+                )
 
     # Use Matplotlib to display the image
     plt.imshow(image)
     plt.axis("off")  # Hide axis
     # plt.title("Segmented Lines with Labels on Image")
+    plt.tight_layout()
     if seg_name:
         plt.savefig(seg_name, bbox_inches="tight", dpi=300)
     else:
@@ -876,9 +909,9 @@ def epecheck(mask, target, vposes, hposes):
 class EPEChecker:
     def __init__(
         self,
-        litho=LithoSim("./configs/litho/default.yaml"),
+        litho: LithoSim,
+        device: torch.device,
         thresh=0.5,
-        device=DEVICE,
     ):
         self._litho = litho
         self._thresh = thresh
@@ -910,9 +943,9 @@ from adabox import proc, tools
 class ShotCounter:
     def __init__(
         self,
-        litho=LithoSim("./configs/litho/default.yaml"),
+        litho: LithoSim,
+        device: torch.device,
         thresh=0.5,
-        device=DEVICE,
     ):
         self._litho = litho
         self._thresh = thresh
@@ -1105,7 +1138,7 @@ def evaluate(mask, target, litho, scale=1, shots=False, verbose=False):
     epe = epeIn + epeOut
     nshot = shotCount.run(mask, shape=(512, 512)) if shots else -1
     if verbose:
-        print(f"[{maskfile}]: L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {nshot:.0f}")
+        print(f"L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {nshot:.0f}")
 
     return l2, pvb, epe, nshot
 
@@ -1126,7 +1159,7 @@ def draw_grad_map(grad_map, binary_mask, idx=0, show=True, save=True):
 
 
 def draw_edge_params(edge_params, shape, show=True):
-    image = torch.zeros(shape).to(device=DEVICE)
+    image = torch.zeros(shape).to(device=edge_params.device)
     edge_params_clone = edge_params.clone().detach()
     for edge in edge_params_clone:
         start_point = edge[:, 0].clone().detach().int()
@@ -1146,7 +1179,134 @@ def draw_edge_params(edge_params, shape, show=True):
     return image.cpu().numpy()
 
 
+def test_metadata():
+    for i in range(1, 2):
+        maskfile = f"./benchmark/ICCAD2013/M1_test{i}.glp"
+        # maskfile = f"./benchmark/edge_bench/edge_test{i}.glp"
+        design = glp_seg.Design(maskfile)
+        shape = (2048, 2048)
+        offset = (512, 512)
+        target, edge_params, metadata = SegLoader.SegmentsInitTorch().run(
+            design, shape[0], shape[1], offset[0], offset[1]
+        )
+        direction_vectors = metadata["direction_vectors"]
+        velocities = metadata["velocities"]
+        print(edge_params[1])
+        print("dir", direction_vectors[1])
+        print("vel", velocities[1])
+        edge_params_1 = edge_params[1].clone().detach()
+        vel_1 = velocities[1]
+        vel_1 = vel_1 * 0.5
+        print("vel_1", vel_1)
+        print(edge_params_1)
+        print(edge_params_1 + vel_1)
+        velocities = velocities[:5]
+        averages = torch.randn(velocities.shape[0], 1, device=edge_params.device)
+        averages = averages[:5].view(-1, 1, 1)
+        print(averages)
+        print(velocities)
+        print(averages * velocities)
+
+
+def test_seg_vis():
+    for i in range(1, 2):
+        maskfile = f"./benchmark/ICCAD2013/M1_test{i}.glp"
+        # maskfile = f"./benchmark/edge_bench/edge_test{i}.glp"
+        shape = (2048, 2048)
+        offset = (512, 512)
+        design = glp_seg.Design(maskfile, down=1)
+        design.center(shape[0], shape[1], offset[0], offset[1])
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        target = torch.tensor(design.mat(shape[0], shape[1], offset[0], offset[1]), device=device)
+        seg_length = 80
+        design_edges = design.polygon_edges
+        segs = segment_polygon_edges_with_labels(design_edges, seg_length)
+        print(segs)
+        seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg.png"
+        visualize_segments_with_labels(
+            target, segs, only_start=False, only_end=False, seg_name=seg_name
+        )
+        seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_start.png"
+        visualize_segments_with_labels(
+            target, segs, only_start=True, only_end=False, seg_name=seg_name
+        )
+        seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_end.png"
+        visualize_segments_with_labels(
+            target, segs, only_start=False, only_end=True, seg_name=seg_name
+        )
+
+
+def test_vel_vis():
+    def segs2metadata(seg_params):
+        edge_params = []
+        polygon_ids = []
+        direction_vectors = []
+        velocities = []
+        corner_ids = []
+        device = seg_params[0][0]["segment"].device
+        # determine velocity based on clockwise and counter clockwise
+        for idx, poly in enumerate(seg_params):
+            polygon_ids.append(torch.full((len(poly),), idx, dtype=torch.int32))
+            seg_0 = poly[0]
+            is_clockwise = True if seg_0["direction"][0] == 1 else False
+            # print(f"polygon {idx} is clockwise: {is_clockwise}")
+            for seg in poly:
+                edge_params.append(seg["segment"].detach().clone())
+                direction_vectors.append(seg["direction"].detach().clone())
+                # proceed to mark corners
+                corner = 1 if "C" in seg["type"] else 0
+                corner_ids.append(corner)
+                # proceed to calculate the velocity
+                velocity = right_perpendicular_unit_vector(seg["direction"])
+                if not is_clockwise:
+                    velocity = -velocity
+                velocity = torch.stack([velocity, velocity], dim=0)
+                velocity = torch.transpose(velocity, 0, 1)
+                velocities.append(velocity.round().detach().clone())
+        edge_params = torch.stack(edge_params, dim=0).to(device).requires_grad_(True)
+        polygon_ids = torch.cat(polygon_ids, dim=0).to(device)
+        direction_vectors = torch.stack(direction_vectors, dim=0).to(device)
+        velocities = torch.stack(velocities, dim=0).to(device)
+        corner_ids = torch.tensor(corner_ids, dtype=torch.int32, device=device)
+        return edge_params, polygon_ids, direction_vectors, velocities, corner_ids
+
+    for i in range(1, 2):
+        maskfile = f"./benchmark/ICCAD2013/M1_test{i}.glp"
+        # maskfile = f"./benchmark/edge_bench/edge_test{i}.glp"
+        shape = (2048, 2048)
+        offset = (512, 512)
+        design = glp_seg.Design(maskfile, down=1)
+        design.center(shape[0], shape[1], offset[0], offset[1])
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        target = torch.tensor(design.mat(shape[0], shape[1], offset[0], offset[1]), device=device)
+        seg_length = 40
+        design_edges = design.polygon_edges
+        segs = segment_polygon_edges_with_labels(design_edges, seg_length)
+        # print(segs)
+        edge_params, polygon_ids, direction_vectors, velocities, corner_ids = segs2metadata(segs)
+        # print(velocities)
+        seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg.png"
+        visualize_segments_with_labels(
+            target,
+            segs,
+            only_start=False,
+            only_end=False,
+            seg_name=seg_name,
+            velocities=velocities,
+        )
+        # seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_start.png"
+        # visualize_segments_with_labels(
+        #     target, segs, only_start=True, only_end=False, seg_name=seg_name
+        # )
+        # seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_end.png"
+        # visualize_segments_with_labels(
+        #     target, segs, only_start=False, only_end=True, seg_name=seg_name
+        # )
+
+
 if __name__ == "__main__":
+    # test_seg_vis()
+    test_vel_vis()
     # targetfile = "./benchmark/edge_bench/edge_test1.glp"
     # maskfile = "./benchmark/edge_bench/edge_test1.glp"
     # mask_shape = (512, 512)
@@ -1158,104 +1318,74 @@ if __name__ == "__main__":
     # ref = glp.Design(targetfile, down=1)
     # ref.center(2048, 2048, 0, 0)
     # target = ref.mat(2048, 2048, 0, 0)
-    for i in range(1, 2):
-        maskfile = f"./benchmark/ICCAD2013/M1_test{i}.glp"
-        # maskfile = f"./benchmark/edge_bench/edge_test{i}.glp"
-        design = glp_seg.Design(maskfile)
-        shape = (2048, 2048)
-        offset = (512, 512)
-        target, edge_params, metadata = SegLoader.SegmentsInitTorch().run(
-            design, shape[0], shape[1], offset[0], offset[1]
-        )
-        # plt.imshow(target.cpu().numpy())
-        # plt.show()
-        direction_vectors = metadata["direction_vectors"]
-        velocities = metadata["velocities"]
-        print(edge_params[1])
-        print("dir", direction_vectors[1])
-        print("vel", velocities[1])
-        edge_params_1 = edge_params[1].clone().detach()
-        # edge_params_1 += velocities[1].T
-        # print(edge_params_1)
-        # edge_params_1 = edge_params_1.unsqueeze(0)
-        vel_1 = velocities[1]
-        vel_1 = vel_1 * 0.5
-        print("vel_1", vel_1)
-        print(edge_params_1)
-        print(edge_params_1 + vel_1)
-        velocities = velocities[:5]
-        averages = torch.randn(velocities.shape[0], 1, device=DEVICE)
-        averages = averages[:5].view(-1, 1, 1)
-        print(averages)
-        print(velocities)
-        print(averages * velocities)
 
-        # image = torch.zeros(shape).to(device=DEVICE)
-        # for edge in edge_params:
-        #     edge = edge.detach().cpu().numpy().astype(int)
-        #     start_point = tuple(edge[:, 0])
-        #     end_point = tuple(edge[:, 1])
-        #     image[start_point[0]:end_point[0], start_point[1], end_point[1]] = 1
-        # plt.imshow(image.cpu().numpy())
-        # plt.show()
+    # image = torch.zeros(shape).to(device=DEVICE)
+    # for edge in edge_params:
+    #     edge = edge.detach().cpu().numpy().astype(int)
+    #     start_point = tuple(edge[:, 0])
+    #     end_point = tuple(edge[:, 1])
+    #     image[start_point[0]:end_point[0], start_point[1], end_point[1]] = 1
+    # plt.imshow(image.cpu().numpy())
+    # plt.show()
 
-        # draw_edge_params(edge_params, shape)
+    # draw_edge_params(edge_params, shape)
 
-        # maskfile = f"./benchmark/edge_bench/M1_part_test{i}.glp"
-        # mask_shape = (1280, 1280)
-        # # maskfile = f"./benchmark/edge_bench/edge_test{i}.glp"
-        # # mask_shape = (512, 512)
-        # mref = glp_seg.Design(maskfile, down=1)
-        # mref.center(mask_shape[0], mask_shape[1], 0, 0)
-        # mask = mref.mat(mask_shape[0], mask_shape[1], 0, 0)
-        # mask_tensor = torch.tensor(mask, dtype=REALTYPE, device=DEVICE)
-        # # vposes, hposes, metadata = boundaries(mask_tensor)
-        # # print(metadata)
-        # mask_edges = mref.polygon_edges
-        # # print(mask_edges)
-        # # mask_edges_tensor = torch.tensor(mask_edges, dtype=REALTYPE, device=DEVICE)
-        # segs = segment_polygon_edges_with_labels(mask_edges, SEG_LENGTH)
-        # # validate_poly_edge_segments(segs)
-        # merged_polygons = segments_merge2polygon(segs, mask_shape[0], mask_shape[1])
+    # maskfile = f"./benchmark/edge_bench/M1_part_test{i}.glp"
+    # mask_shape = (1280, 1280)
+    # # maskfile = f"./benchmark/edge_bench/edge_test{i}.glp"
+    # # mask_shape = (512, 512)
+    # mref = glp_seg.Design(maskfile, down=1)
+    # mref.center(mask_shape[0], mask_shape[1], 0, 0)
+    # mask = mref.mat(mask_shape[0], mask_shape[1], 0, 0)
+    # mask_tensor = torch.tensor(mask, dtype=REALTYPE, device=DEVICE)
+    # # vposes, hposes, metadata = boundaries(mask_tensor)
+    # # print(metadata)
+    # mask_edges = mref.polygon_edges
+    # # print(mask_edges)
+    # # mask_edges_tensor = torch.tensor(mask_edges, dtype=REALTYPE, device=DEVICE)
+    # segs = segment_polygon_edges_with_labels(mask_edges, SEG_LENGTH)
+    # # validate_poly_edge_segments(segs)
+    # merged_polygons = segments_merge2polygon(segs, mask_shape[0], mask_shape[1])
 
-        # visual_seg2poly(segs, metadata)
-        # seg_name = f"./tmp/segs/edge/edge_test{i}_seg_start.png"
-        # visualize_segments_with_labels(mask_tensor, segs)
-        # seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg.png"
-        # visualize_segments_with_labels(
-        #     mask_tensor, segs, only_start=False, only_end=False, seg_name=seg_name
-        # )
-        # seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_start.png"
-        # visualize_segments_with_labels(
-        #     mask_tensor, segs, only_start=True, only_end=False, seg_name=seg_name
-        # )
-        # seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_end.png"
-        # visualize_segments_with_labels(
-        #     mask_tensor, segs, only_start=False, only_end=True, seg_name=seg_name
-        # )
+    # visual_seg2poly(segs, metadata)
+    # seg_name = f"./tmp/segs/edge/edge_test{i}_seg_start.png"
+    # visualize_segments_with_labels(mask_tensor, segs)
+    # segs = segment_polygon_edges_with_labels(edge_params, SEG_LENGTH)
+    # seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg.png"
+    # visualize_segments_with_labels(
+    #     mask_tensor, segs, only_start=False, only_end=False, seg_name=seg_name
+    # )
+    # seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_start.png"
+    # visualize_segments_with_labels(
+    #     mask_tensor, segs, only_start=True, only_end=False, seg_name=seg_name
+    # )
+    # seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_end.png"
+    # visualize_segments_with_labels(
+    #     mask_tensor, segs, only_start=False, only_end=True, seg_name=seg_name
+    # )
 
-        # seg_name = f"./tmp/segs/edge/M1_part_test{i}_seg.png"
-        # visualize_segments_with_labels(
-        #     mask_tensor, segs, only_start=False, only_end=False, seg_name=seg_name
-        # )
-        # seg_name = f"./tmp/segs/edge/M1_part_test{i}_seg_start.png"
-        # visualize_segments_with_labels(
-        #     mask_tensor, segs, only_start=True, only_end=False, seg_name=seg_name
-        # )
-        # seg_name = f"./tmp/segs/edge/M1_part_test{i}_seg_end.png"
-        # visualize_segments_with_labels(
-        #     mask_tensor, segs, only_start=False, only_end=True, seg_name=seg_name
-        # )
+    # seg_name = f"./tmp/segs/edge/M1_part_test{i}_seg.png"
+    # visualize_segments_with_labels(
+    #     mask_tensor, segs, only_start=False, only_end=False, seg_name=seg_name
+    # )
+    # seg_name = f"./tmp/segs/edge/M1_part_test{i}_seg_start.png"
+    # visualize_segments_with_labels(
+    #     mask_tensor, segs, only_start=True, only_end=False, seg_name=seg_name
+    # )
+    # seg_name = f"./tmp/segs/edge/M1_part_test{i}_seg_end.png"
+    # visualize_segments_with_labels(
+    #     mask_tensor, segs, only_start=False, only_end=True, seg_name=seg_name
+    # )
 
-        # seg_name = f"./tmp/segs/edge/edge_test{i}_seg.png"
-        # visualize_segments_with_labels(
-        #     mask_tensor, segs, only_start=False, only_end=False, seg_name=seg_name
-        # )
-        # seg_name = f"./tmp/segs/edge/edge_test{i}_seg_start.png"
-        # visualize_segments_with_labels(
-        #     mask_tensor, segs, only_start=True, only_end=False, seg_name=seg_name
-        # )
-        # seg_name = f"./tmp/segs/edge/edge_test{i}_seg_end.png"
-        # visualize_segments_with_labels(
-        #     mask_tensor, segs, only_start=False, only_end=True, seg_name=seg_name
-        # )
+    # seg_name = f"./tmp/segs/edge/edge_test{i}_seg.png"
+    # visualize_segments_with_labels(
+    #     mask_tensor, segs, only_start=False, only_end=False, seg_name=seg_name
+    # )
+    # seg_name = f"./tmp/segs/edge/edge_test{i}_seg_start.png"
+    # visualize_segments_with_labels(
+    #     mask_tensor, segs, only_start=True, only_end=False, seg_name=seg_name
+    # )
+    # seg_name = f"./tmp/segs/edge/edge_test{i}_seg_end.png"
+    # visualize_segments_with_labels(
+    #     mask_tensor, segs, only_start=False, only_end=True, seg_name=seg_name
+    # )

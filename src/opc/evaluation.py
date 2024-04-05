@@ -10,23 +10,17 @@ import torch.nn as nn
 import torch.nn.functional as func
 import torch.optim as optim
 
-from src.data.datatype import COMPLEXTYPE, REALTYPE
-
-DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
-from src.data.loaders import glp
-
-# import pylitho.simple as lithosim
-# import pylitho.exact as lithosim
+from src.data.datatype import REALTYPE
+from src.data.loaders import glp_seg
 from src.litho.simple import LithoSim
 
 
 class Basic:
     def __init__(
         self,
-        litho=LithoSim("./configs/litho/default.yaml"),
+        litho: LithoSim,
+        device: torch.device,
         thresh=0.5,
-        device=DEVICE,
     ):
         self._thresh = thresh
         self._device = device
@@ -86,7 +80,7 @@ MIN_EPE_CHECK_LENGTH = 80
 EPE_CHECK_START_INTERVEL = 40
 
 
-def boundaries(target, dtype=REALTYPE, device=DEVICE):
+def boundaries(target):
     boundary = torch.zeros_like(target)
     corner = torch.zeros_like(target)
     vertical = torch.zeros_like(target)
@@ -294,9 +288,9 @@ def epecheck(mask, target, vposes, hposes):
 class EPEChecker:
     def __init__(
         self,
-        litho=LithoSim("./configs/litho/default.yaml"),
+        litho: LithoSim,
+        device: torch.device,
         thresh=0.5,
-        device=DEVICE,
     ):
         self._litho = litho
         self._thresh = thresh
@@ -329,9 +323,9 @@ from adabox import proc, tools
 class ShotCounter:
     def __init__(
         self,
-        litho=LithoSim("./configs/litho/default.yaml"),
+        litho: LithoSim,
+        device: torch.device,
         thresh=0.5,
-        device=DEVICE,
     ):
         self._litho = litho
         self._thresh = thresh
@@ -366,9 +360,9 @@ class ShotCounter:
 
 
 def evaluate(mask, target, litho, device, scale=1, shots=False, verbose=False):
-    test = Basic(litho, 0.5, device)
-    epeCheck = EPEChecker(litho, 0.5)
-    shotCount = ShotCounter(litho, 0.5)
+    test = Basic(litho=litho, thresh=0.5, device=device)
+    epeCheck = EPEChecker(litho=litho, thresh=0.5, device=device)
+    shotCount = ShotCounter(litho=litho, thresh=0.5, device=device)
 
     l2, pvb = test.run(mask, target, scale=scale)
     epeIn, epeOut = epeCheck.run(mask, target, scale=scale)
@@ -394,7 +388,7 @@ if __name__ == "__main__":
         target = cv2.imread(targetfile)[:, :, 0] / 255
         target = cv2.resize(target, (2048, 2048))
     else:
-        ref = glp.Design(targetfile, down=1)
+        ref = glp_seg.Design(targetfile, down=1)
         ref.center(2048, 2048, 0, 0)
         target = ref.mat(2048, 2048, 0, 0)
 

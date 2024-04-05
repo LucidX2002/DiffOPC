@@ -6,7 +6,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from src.utils import pylogger, rich_utils
 
-log = pylogger.RankedLogger(__name__, rank_zero_only=True)
+log = pylogger.RankedLogger(__name__)
 
 
 def extras(cfg: DictConfig) -> None:
@@ -96,7 +96,7 @@ def task_wrapper(task_func: Callable) -> Callable:
 
 
 def get_metric_value(metric_dict: Dict[str, Any], metric_name: Optional[str]) -> Optional[float]:
-    """Safely retrieves value of the metric logged in LightningModule.
+    """Safely retrieves value of the metric logged in Module.
 
     :param metric_dict: A dict containing metric values.
     :param metric_name: If provided, the name of the metric to retrieve.
@@ -109,7 +109,7 @@ def get_metric_value(metric_dict: Dict[str, Any], metric_name: Optional[str]) ->
     if metric_name not in metric_dict:
         raise Exception(
             f"Metric value not found! <metric_name={metric_name}>\n"
-            "Make sure metric name logged in LightningModule is correct!\n"
+            "Make sure metric name logged in Module is correct!\n"
             "Make sure `optimized_metric` name in `hparams_search` config is correct!"
         )
 
