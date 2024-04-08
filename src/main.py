@@ -110,12 +110,13 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         log.info("Logging hyperparameters!")
         log_hyperparameters(object_dict)
 
+    log_info = ""
     for m in eval_metrics:
         if len(metric_dict["eval_" + m]) > 0:
-            log.info(f"eval_{m}: {metric_dict['eval_'+m]}")
             metric_dict[m] = sum(metric_dict["eval_" + m]) / len(metric_dict["eval_" + m])
-            log.info(f"avg_{m}: {metric_dict[m]}")
+            log_info += f"avg_{m}: {metric_dict[m]:.1f}; "
             logger[0].track(metric_dict[m], name=f"{m}")
+    log.info(log_info)
 
     return metric_dict, object_dict
 

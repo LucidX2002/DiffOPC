@@ -80,7 +80,6 @@ class Iccad13Single(Dataset):
         # assert index == 0, f"Index {index} out of bounds"
         data_idx = index + self.data_idx
         glp_path = f"{self.data_dir}/M1_test{data_idx}.glp"
-        print(glp_path)
         design = glp_seg.Design(glp_path, down=self.down_scale)
         target, edge_params, metadata = SegmentsInitTorch().run(
             design,

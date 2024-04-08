@@ -1,0 +1,19 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py exps=sraf
+
+defaults:
+  - override /opc: default
+  - override /data: single
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+tags: ["srafs"]
+
+opc:
+  Iterations: 5
+
+data:
+  data_idx: 3
