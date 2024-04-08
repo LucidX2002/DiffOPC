@@ -196,6 +196,7 @@ class EdgeILTSolver:
         # Optimizer
         # opt = optim.SGD([edge_params], lr=self._config["StepSize"])
         opt = optim.Adam([edge_params], lr=self._config["StepSize"])
+        target = target.clone().detach()
 
         # Optimization process
         lossMin, l2Min, pvbMin = 1e12, 1e12, 1e12
@@ -208,13 +209,13 @@ class EdgeILTSolver:
             mask, printedNom, printedMax, printedMin, edge_params_clone = self._edgeILT(
                 edge_params, metadata, idx
             )
-
-            if idx % 5 == 0:
-                mask_cpu = mask.clone().detach().cpu().numpy()
-                all_masks.append({"mask": mask_cpu, "iteration": idx})
-                shape = (self._config["TileSizeX"], self._config["TileSizeY"])
-                mask_edge_cpu = draw_edge_params(edge_params_clone, shape, show=False)
-                all_mask_edges.append({"mask": mask_edge_cpu, "iteration": idx})
+            if self._config["VISUAL_DEBUG"]:
+                if idx % 5 == 0:
+                    mask_cpu = mask.clone().detach().cpu().numpy()
+                    all_masks.append({"mask": mask_cpu, "iteration": idx})
+                    shape = (self._config["TileSizeX"], self._config["TileSizeY"])
+                    mask_edge_cpu = draw_edge_params(edge_params_clone, shape, show=False)
+                    all_mask_edges.append({"mask": mask_edge_cpu, "iteration": idx})
 
             l2loss = func.mse_loss(printedNom, target, reduction="sum")
             pvbl2 = func.mse_loss(printedMax, target, reduction="sum") + func.mse_loss(
@@ -309,14 +310,14 @@ def serial():
     targetsAll = []
     paramsAll = []
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    edgeILTCfg = OmegaConf.load("./configs/opc/default.yaml")
+    edgeILTCfg = OmegaConf.load("./configs/opc/direct_run.yaml")
     edgeILTCfg = OmegaConf.to_container(edgeILTCfg, resolve=True, throw_on_missing=True)
     cfg = EdgeILTCfg(edgeILTCfg)
 
     lithoCfg = OmegaConf.load("./configs/litho/default.yaml")
     litho = LithoSim(lithoCfg.litho_config, device)
     solver = EdgeILTSolver(cfg, litho, device)
-    for idx in range(cfg["StartCase"], cfg["EndCase"]):
+    for idx in range(1, 11):
         design = glp_seg.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=SCALE)
         # design = glp_seg.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=SCALE)
         # design.center(cfg["TileSizeX"], cfg["TileSizeY"], cfg["OffsetX"], cfg["OffsetY"])

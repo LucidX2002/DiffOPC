@@ -2,7 +2,7 @@ Iterations: 80
 TargetDensity: 0.225
 SigmoidSteepness: 4.0
 WeightEPE: 0.5
-WeightL2: 1.0
+WeightL2: 2.0
 WeightPVBL2: 0.5
 WeightPVBand: 0.0
 StepSize: 1

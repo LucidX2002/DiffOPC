@@ -1,4 +1,4 @@
-Iterations: 80
+Iterations: 1
 TargetDensity: 0.225
 SigmoidSteepness: 4.0
 WeightEPE: 0.5
@@ -17,5 +17,3 @@ SEG_LENGTH: 60
 VISUAL_DEBUG: 0
 VERBOSE: 1
 Evaluation: 1
-StartCase: 1
-EndCase: 11

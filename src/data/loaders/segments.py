@@ -11,12 +11,9 @@ import torch.nn as nn
 import torch.nn.functional as func
 import torch.optim as optim
 
-from src.data.datatype import COMPLEXTYPE, REALTYPE
-
-DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
 # import pycommon.utils as common
 import src.data.loaders.glp_seg as glp_seg
+from src.data.datatype import COMPLEXTYPE, REALTYPE
 from src.litho.simple import LithoSim
 from src.opc.utils import (
     right_perpendicular_unit_vector,
@@ -28,7 +25,7 @@ class Initializer:
     def __init__(self):
         pass
 
-    def run(self, design, sizeX, sizeY, offsetX, offsetY, dtype=REALTYPE, device=DEVICE):
+    def run(self, design, sizeX, sizeY, offsetX, offsetY, device, dtype=REALTYPE):
         pass
 
 
@@ -89,17 +86,17 @@ def _distMatLegacy(design, canvas=[[0, 0], [2048, 2048]], offsets=[512, 512]):
     return dist
 
 
-def _distMatPolygonTorch(polygon, canvas, offsets):
+def _distMatPolygonTorch(polygon, canvas, offsets, device):
     if len(canvas) == 4:
         canvas = [[canvas[0], canvas[1]], [canvas[2], canvas[3]]]
     minX, minY, maxX, maxY = canvas[0][0], canvas[0][1], canvas[1][0], canvas[1][1]
     sizeX, sizeY = maxX - minX, maxY - minY
 
-    dist = torch.ones([sizeX, sizeY], dtype=REALTYPE, device=DEVICE) * (sizeX * sizeY)
+    dist = torch.ones([sizeX, sizeY], dtype=REALTYPE, device=device) * (sizeX * sizeY)
     xs = np.arange(minX, maxX, 1, dtype=np.int32).reshape([sizeX, 1])
     ys = np.arange(minY, maxY, 1, dtype=np.int32).reshape([1, sizeY])
-    xs = torch.tensor(np.tile(xs, [1, sizeY]), dtype=REALTYPE, device=DEVICE)
-    ys = torch.tensor(np.tile(ys, [sizeX, 1]), dtype=REALTYPE, device=DEVICE)
+    xs = torch.tensor(np.tile(xs, [1, sizeY]), dtype=REALTYPE, device=device)
+    ys = torch.tensor(np.tile(ys, [sizeX, 1]), dtype=REALTYPE, device=device)
 
     frPt = polygon[-1]
     for toPt in polygon:
@@ -132,7 +129,7 @@ def _distMatPolygonTorch(polygon, canvas, offsets):
     return dist.T
 
 
-def _distMatTorch(design, canvas=[[0, 0], [2048, 2048]], offsets=[512, 512], mask=None):
+def _distMatTorch(design, device, canvas=[[0, 0], [2048, 2048]], offsets=[512, 512], mask=None):
     if len(canvas) == 4:
         canvas = [[canvas[0], canvas[1]], [canvas[2], canvas[3]]]
     minX, minY, maxX, maxY = canvas[0][0], canvas[0][1], canvas[1][0], canvas[1][1]
@@ -141,7 +138,7 @@ def _distMatTorch(design, canvas=[[0, 0], [2048, 2048]], offsets=[512, 512], mas
         mask = design.mat(
             sizeX=maxX - minX, sizeY=maxY - minY, offsetX=offsets[0], offsetY=offsets[1]
         )
-    dist = torch.ones([maxX - minX, maxY - minY], dtype=REALTYPE, device=DEVICE) * (
+    dist = torch.ones([maxX - minX, maxY - minY], dtype=REALTYPE, device=device) * (
         (maxX - minX) * (maxY - minY)
     )
     for polygon in design.polygons:
@@ -178,14 +175,14 @@ class LevelSetInit(Initializer):
     def __init__(self):
         super().__init__()
 
-    def run(self, design, sizeX, sizeY, offsetX, offsetY, dtype=REALTYPE, device=DEVICE):
+    def run(self, design, sizeX, sizeY, offsetX, offsetY, device, dtype=REALTYPE):
         target = torch.tensor(
             design.mat(sizeX, sizeY, offsetX, offsetY), dtype=dtype, device=device
         )
         params = torch.tensor(
             _distMat(design, canvas=[[0, 0], [sizeX, sizeY]], offsets=[offsetX, offsetY]),
             dtype=REALTYPE,
-            device=DEVICE,
+            device=device,
             requires_grad=True,
         )
         return target, params
@@ -195,7 +192,7 @@ class LevelSetInitTorch(Initializer):
     def __init__(self):
         super().__init__()
 
-    def run(self, design, sizeX, sizeY, offsetX, offsetY, dtype=REALTYPE, device=DEVICE):
+    def run(self, design, sizeX, sizeY, offsetX, offsetY, dtype, device):
         target = torch.tensor(
             design.mat(sizeX, sizeY, offsetX, offsetY), dtype=dtype, device=device
         )
@@ -243,7 +240,15 @@ class SegmentsInitTorch(Initializer):
         return edge_params, polygon_ids, direction_vectors, velocities, corner_ids
 
     def run(
-        self, design, sizeX, sizeY, offsetX, offsetY, seg_length, dtype=REALTYPE, device=DEVICE
+        self,
+        design,
+        sizeX,
+        sizeY,
+        offsetX,
+        offsetY,
+        seg_length,
+        device,
+        dtype=REALTYPE,
     ):
         self.device = device
         design.center(sizeX, sizeY, offsetX, offsetY)

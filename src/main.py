@@ -1,3 +1,4 @@
+import time
 from logging import Logger
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -24,6 +25,9 @@ rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 # more info: https://github.com/ashleve/rootutils
 # ------------------------------------------------------------------------------------ #
 
+from torch.utils.data import Dataset
+
+import src.opc.evaluation as evaluation
 from src.litho.simple import LithoSim
 from src.opc.edgeilt import EdgeILTCfg, EdgeILTSolver
 from src.utils import (
@@ -59,55 +63,60 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     log.info("Instantiating OPC model")
     opc_model: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc), litho, device)
 
-    # log.info(f"Instantiating datamodule <{cfg.data._target_}>")
-    # datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data)
+    log.info(f"Instantiating dataset <{cfg.data._target_}>")
+    dataset: Dataset = hydra.utils.instantiate(cfg.data, device=device)
 
-    # log.info(f"Instantiating model <{cfg.model._target_}>")
-    # model: LightningModule = hydra.utils.instantiate(cfg.model)
+    # log.info(f"Instantiating logger <{cfg.logger.aim._target_}>")
+    # aim_logger = hydra.utils.instantiate(cfg.logger.aim)
 
-    # log.info("Instantiating callbacks...")
-    # callbacks: List[Callback] = instantiate_callbacks(cfg.get("callbacks"))
+    log.info("Instantiating loggers...")
+    logger: List[Logger] = instantiate_loggers(cfg.get("logger"))
 
-    # log.info("Instantiating loggers...")
-    # logger: List[Logger] = instantiate_loggers(cfg.get("logger"))
+    eval_metrics = ["l2", "pvb", "epe", "shot", "runtime"]
 
-    # log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
-    # trainer: Trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger)
-
-    # object_dict = {
-    #     "cfg": cfg,
-    #     "datamodule": datamodule,
-    #     "model": model,
-    #     "callbacks": callbacks,
-    #     "logger": logger,
-    #     "trainer": trainer,
-    # }
-
-    # if logger:
-    #     log.info("Logging hyperparameters!")
-    #     log_hyperparameters(object_dict)
-
-    # if cfg.get("train"):
-    #     log.info("Starting training!")
-    #     trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))
-
-    # train_metrics = trainer.callback_metrics
-
-    # if cfg.get("test"):
-    #     log.info("Starting testing!")
-    #     ckpt_path = trainer.checkpoint_callback.best_model_path
-    #     if ckpt_path == "":
-    #         log.warning("Best ckpt not found! Using current weights for testing...")
-    #         ckpt_path = None
-    #     trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
-    #     log.info(f"Best ckpt path: {ckpt_path}")
-
-    # test_metrics = trainer.callback_metrics
-
-    # # merge train and test metrics
-    # metric_dict = {**train_metrics, **test_metrics}
     metric_dict = {}
-    object_dict = {}
+
+    for m in eval_metrics:
+        metric_dict["eval_" + m] = []
+
+    # for _, data in enumerate(data_loader):
+    for i in range(len(dataset)):
+        data = dataset[i]
+        target, edge_params, metadata, data_idx = data
+        _, _, _, best_mask, best_mask_iter = opc_model.solve(
+            target, edge_params, metadata, case_id=data_idx, curv=None, verbose=False
+        )
+        if cfg.get("eval"):
+            begin = time.time()
+            l2, pvb, epe, shot = evaluation.evaluate(
+                best_mask, target, litho, device=device, scale=1, shots=True
+            )
+            runtime = time.time() - begin
+            metric_dict["eval_l2"].append(l2)
+            metric_dict["eval_pvb"].append(pvb)
+            metric_dict["eval_epe"].append(epe)
+            metric_dict["eval_shot"].append(shot)
+            metric_dict["eval_runtime"].append(runtime)
+            log.info(
+                f"[Testcase {data_idx}]: L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {shot:.0f}; BestIter: {best_mask_iter} SolveTime: {runtime:.2f}s"
+            )
+
+    object_dict = {
+        "cfg": cfg,
+        "logger": logger,
+    }
+
+    if logger:
+        log.info("Logging hyperparameters!")
+        log_hyperparameters(object_dict)
+
+    for m in eval_metrics:
+        if len(metric_dict["eval_" + m]) > 0:
+            log.info(f"eval_{m}: {metric_dict['eval_'+m]}")
+            metric_dict[m] = sum(metric_dict["eval_" + m]) / len(metric_dict["eval_" + m])
+            log.info(f"avg_{m}: {metric_dict[m]}")
+            logger[0].track(metric_dict[m], name=f"{m}")
+
     return metric_dict, object_dict
 
 

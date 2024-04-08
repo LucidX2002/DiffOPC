@@ -1,0 +1,11 @@
+_target_: src.data.iccad13_data.Iccad13Dataset
+
+data_dir: ./benchmark/ICCAD2013
+tile_size_x: ${opc.TileSizeX}
+tile_size_y: ${opc.TileSizeY}
+offset_x: ${opc.OffsetX}
+offset_y: ${opc.OffsetY}
+seg_length: ${opc.SEG_LENGTH}
+start_idx: 1
+end_idx: 10
+down_scale: 1
