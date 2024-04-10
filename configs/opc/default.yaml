@@ -14,8 +14,19 @@ OffsetY: 512
 ILTSizeX: 1024
 ILTSizeY: 1024
 SEG_LENGTH: 60
+
+# SRAF parameters
+SRAF_FORBIDDEN: 40
+SRAF_ITERATIONS: 40
+SRAF_threshold_min: 0.2
+SRAF_contour_area: 400
+SRAF_min_contour_wh_rule: 20
+SRAF_initial_sraf_wh: 60
+
+# Debug parameters
 VISUAL_DEBUG: 0
 VERBOSE: 1
+
 Evaluation: 1
 StartCase: 1
 EndCase: 11

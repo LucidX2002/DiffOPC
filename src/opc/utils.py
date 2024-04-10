@@ -1,3 +1,4 @@
+import os
 import sys
 
 sys.path.append(".")
@@ -6,13 +7,17 @@ import multiprocessing as mp
 from itertools import groupby
 
 import cv2
+import matplotlib
 import matplotlib.pyplot as plt
+
+matplotlib.use("agg")
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as func
 import torch.optim as optim
-from kornia.utils import draw_convex_polygon
+
+# from kornia.utils import draw_convex_polygon
 from rich import print
 
 import src.data.loaders.segments as SegLoader
@@ -245,7 +250,7 @@ def visualizeBoundaries(target, vposes, hposes):
     plt.show()
 
 
-def segment_polygon_edges_with_labels(polygon_edges, seg_length, device="cpu"):
+def segment_polygon_edges_with_labels(polygon_edges, seg_length, segment_id_start=0, device="cpu"):
     """Segments vertical and horizontal lines into smaller segments of a fixed length, labels
     vertical (V), horizontal (H), corner vertical (CV), and corner horizontal (CH) segments, and
     assigns a unique ID to each segment.
@@ -263,7 +268,6 @@ def segment_polygon_edges_with_labels(polygon_edges, seg_length, device="cpu"):
             with 'segment' (tensor representing the segmented part of a line with integer coordinates),
             'type' (string label of the segment type), and 'id' (unique identifier).
     """
-    device = "cpu"
 
     def split_edge(edge, segment_id):
         midpoint = torch.mean(edge, dim=1).round()
@@ -368,12 +372,15 @@ def segment_polygon_edges_with_labels(polygon_edges, seg_length, device="cpu"):
         ]
 
     all_segments = []
-    segment_id = 0  # Initialize global segment ID
+    segment_id = segment_id_start  # Initialize global segment ID
     # Process vertical segments
     for poly in polygon_edges:
         poly_segments = []
         for poly_id, edge in enumerate(poly):
-            edge = torch.tensor(edge, dtype=REALTYPE, device=device)
+            if not torch.is_tensor(edge):
+                edge = torch.tensor(edge, dtype=REALTYPE, device=device)
+            else:
+                edge = edge.detach().clone()
             new_segments, segment_id = split_edge(edge, segment_id)
             poly_segments.extend(new_segments)
         all_segments.append(poly_segments)
@@ -505,6 +512,73 @@ def create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, heig
     return mask
 
 
+def create_binary_mask_from_vertices_bk(
+    vertices, vertices_polygon_ids, width, height, device=None
+):
+    """Create a binary mask where points inside any of the polygons are marked as 1 and others as
+    0.
+
+    Args:
+    vertices (torch.Tensor): Vertice tensor of shape [M, 2], where M is the total number of vertices,                            and 2 represents 2-D coordinates (x, y)
+    vertices_polygon_ids (torch.Tensor): Tensor of shape [M] containing polygon IDs for each vertex
+    width: Width of the plane.
+    height: Height of the plane.
+    device: Device to use for computations (default: None)
+
+    Returns:
+    A binary mask with shape (height, width), where points inside any of the polygons are marked as 1 and others as 0.
+    """
+    # Determine the device to use
+    if device is None:
+        device = vertices.device
+
+    # Create a grid representing all points on the plane
+    x = torch.arange(width, dtype=torch.float32, device=device)
+    y = torch.arange(height, dtype=torch.float32, device=device)
+    grid_y, grid_x = torch.meshgrid(y, x, indexing="ij")
+    points = torch.stack([grid_x, grid_y], dim=-1)
+
+    # Get the unique polygon IDs
+    unique_ids = torch.unique(vertices_polygon_ids)
+    masks = []
+
+    # Iterate over each polygon ID
+    for idx in unique_ids:
+        # Initialize the binary mask
+        mask = torch.zeros_like(grid_x, dtype=torch.bool)
+        # Initialize the intersection counter
+        count = torch.zeros_like(grid_x, dtype=torch.int32)
+        # Get the vertices corresponding to the current polygon ID
+        polygon_vertices = vertices[vertices_polygon_ids == idx]
+        # Create edges by connecting consecutive vertices and closing the polygon
+        polygon_edges = torch.cat([polygon_vertices, polygon_vertices[:1]], dim=0)
+
+        for i in range(len(polygon_edges) - 1):
+            # Calculate the vectors from each point to the edge endpoints
+            v1 = polygon_edges[i] - points
+            v2 = polygon_edges[i + 1] - points
+
+            # Calculate the cross product of v1 and v2
+            cross = v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]
+
+            # Check if the point is on the edge
+            on_edge = (v1[..., 0] == 0) & (v1[..., 1] >= 0) & (v2[..., 1] < 0)
+
+            # Check if the point is inside the polygon
+            inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | (
+                (v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0)
+            )
+
+            # Increment the count for points inside the polygon or on the edge
+            count += (inside | on_edge).int()
+
+        # If the count is odd, the point is inside at least one polygon
+        mask = count % 2 == 1
+        masks.append(mask)
+    mask = torch.stack(masks, dim=0).any(dim=0)
+    return mask
+
+
 def right_perpendicular_unit_vector(vector):
     # Check if the input is a 2D vector
     assert vector.size(0) == 2, "Input must be a 2D vector"
@@ -585,6 +659,7 @@ def edge_params_merge2mask(edge_params, metadata):
     width, height = img_shape
     binary_mask = create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, height)
     binary_mask = binary_mask.float()
+    binary_mask.requires_grad_(True)
     # plt.imshow(binary_mask.cpu().numpy())
     # plt.show()
     return binary_mask
@@ -1143,19 +1218,67 @@ def evaluate(mask, target, litho, scale=1, shots=False, verbose=False):
     return l2, pvb, epe, nshot
 
 
-def draw_grad_map(grad_map, binary_mask, idx=0, show=True, save=True):
+# def get_minus_grad(grad_map, binary_mask, forbidden_mask):
+
+
+def draw_grad_map(grad_map, binary_mask, forbidden_mask, iter_idx=0, show=True, save=True):
     grad_map_clone = grad_map.clone().detach()
     binary_mask = binary_mask.clone().detach()
+    forbidden_mask = forbidden_mask.clone().detach()
     from src.utils.debug_utils import torch_arr_bound
 
-    torch_arr_bound(grad_map_clone, "grad_map")
+    # torch_arr_bound(grad_map_clone, "grad_map")
     masked_grad_map = torch.zeros_like(grad_map_clone)
     masked_grad_map[binary_mask < 0.5] = grad_map_clone[binary_mask < 0.5]
+    masked_grad_map[forbidden_mask > 0.5] = 0
+    # masked_grad_max = masked_grad_map.max()
+    # masked_grad_min = masked_grad_map.min()
+    # masked_grad_sigmoid = torch.sigmoid(50 * masked_grad_map)
+    # masked_grad_binary = torch.zeros_like(masked_grad_sigmoid)
+    # masked_grad_binary[masked_grad_map > 0 ] = 1
+
+    # masked_grad_min_max = torch.zeros((*masked_grad_map.shape, 3), dtype=torch.uint8)
+    # threshold_min = 0.2
+    # threshold_max = 0.5
+    # max_indices = (masked_grad_map >= (threshold_min) * masked_grad_max) & (masked_grad_map <= (threshold_max) * masked_grad_max)
+    # min_indices = (masked_grad_map <= (threshold_min) * masked_grad_min) & (masked_grad_map >= (threshold_max) * masked_grad_min)
+    # masked_grad_min_max[max_indices] = torch.tensor([0, 0, 255], dtype=torch.uint8)
+    # masked_grad_min_max[min_indices] = torch.tensor([255, 0, 0], dtype=torch.uint8)
+    # masked_grad_min_max[binary_mask > 0.5] = torch.tensor([0, 255, 0], dtype=torch.uint8)
+    # mask[max_indices] = tensor[max_indices]
+
+    masked_grad_minus = torch.zeros_like(masked_grad_map)
+    masked_grad_minus[masked_grad_map < 0] = masked_grad_map[masked_grad_map < 0]
+
+    height, width = masked_grad_map.shape
+    x = torch.arange(0, width, 1)
+    y = torch.arange(0, height, 1)
+    X, Y = torch.meshgrid(x, y, indexing="ij")
+
     if show:
         plt.imshow(masked_grad_map.cpu().numpy())
         plt.show()
     if save:
-        plt.imsave(f"./tmp/grad/masked_grad_map_{idx}.png", masked_grad_map.cpu().numpy())
+        if iter_idx == 0:
+            os.makedirs("./tmp/grad", exist_ok=True)
+        if iter_idx >= 0:
+            print(f"iter_idx: {iter_idx}")
+            # plt.imsave(f"./tmp/grad/masked_grad_map_{iter_idx}.png", masked_grad_map.cpu().numpy())
+            # plt.imsave(f"./tmp/grad/masked_grad_sigmoid_{iter_idx}.png", masked_grad_sigmoid.cpu().numpy(), cmap='gray')
+            # plt.imsave(f"./tmp/grad/masked_grad_binary_{iter_idx}.png", masked_grad_binary.cpu().numpy(), cmap='binary')
+            # plt.imsave(f"./tmp/grad/masked_grad_min_max_{iter_idx}.png", masked_grad_min_max.cpu().numpy())
+            # plt.close()
+            # plt.imsave(f"./tmp/grad/forbidden_mask_{iter_idx}.png", forbidden_mask.cpu().numpy(), cmap='gray')
+            if iter_idx >= 40:
+                torch.save(masked_grad_minus, f"./tmp/grad/masked_grad_minus_{iter_idx}.pt")
+            Z = -masked_grad_minus.cpu().numpy()
+            # Z = np.flip(Z, axis=0)
+            Z = np.rot90(Z, 3)
+            contours = plt.contourf(X.cpu().numpy(), Y.cpu().numpy(), Z)
+            plt.colorbar(contours)
+            plt.tight_layout()
+            plt.savefig(f"./tmp/grad/masked_grad_minus_{iter_idx}.png")
+            plt.close()
 
 
 def draw_edge_params(edge_params, shape, show=True):
@@ -1177,6 +1300,17 @@ def draw_edge_params(edge_params, shape, show=True):
         plt.imshow(image.cpu().numpy())
         plt.show()
     return image.cpu().numpy()
+
+
+def edge_params2forbidden(edge_params, metadata):
+    edge_params = edge_params.clone().detach()
+    velocities = metadata["velocities"]
+    sraf_forbidden_range = metadata["sraf_forbidden"]
+    quantized_edge_params = torch.round(edge_params)
+    forbidden_edge_params = quantized_edge_params + velocities * sraf_forbidden_range
+    forbidden_edge_params = adjust_corner_edge_params(forbidden_edge_params, metadata)
+    forbidden_mask = edge_params_merge2mask(forbidden_edge_params, metadata)
+    return forbidden_mask, forbidden_edge_params
 
 
 def test_metadata():

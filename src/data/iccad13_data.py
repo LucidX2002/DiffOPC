@@ -14,6 +14,7 @@ class Iccad13Dataset(Dataset):
         offset_x: int,
         offset_y: int,
         seg_length: int,
+        sraf_forbidden: int,
         start_idx: int,
         end_idx: int,
         down_scale: int,
@@ -25,6 +26,7 @@ class Iccad13Dataset(Dataset):
         self.offset_x = offset_x
         self.offset_y = offset_y
         self.seg_length = seg_length
+        self.sraf_forbidden = sraf_forbidden
         self.start_idx = start_idx
         self.end_idx = end_idx
         self.down_scale = down_scale
@@ -45,6 +47,7 @@ class Iccad13Dataset(Dataset):
             self.offset_x,
             self.offset_y,
             self.seg_length,
+            self.sraf_forbidden,
             self.device,
         )
         return target, edge_params, metadata, data_idx
@@ -59,6 +62,7 @@ class Iccad13Single(Dataset):
         offset_x: int,
         offset_y: int,
         seg_length: int,
+        sraf_forbidden: int,
         data_idx: int,
         down_scale: int,
         device: torch.device,
@@ -69,6 +73,7 @@ class Iccad13Single(Dataset):
         self.offset_x = offset_x
         self.offset_y = offset_y
         self.seg_length = seg_length
+        self.sraf_forbidden = sraf_forbidden
         self.data_idx = data_idx
         self.down_scale = down_scale
         self.device = device
@@ -88,6 +93,7 @@ class Iccad13Single(Dataset):
             self.offset_x,
             self.offset_y,
             self.seg_length,
+            self.sraf_forbidden,
             self.device,
         )
         return target, edge_params, metadata, data_idx

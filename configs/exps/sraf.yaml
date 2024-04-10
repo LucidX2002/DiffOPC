@@ -13,7 +13,11 @@ defaults:
 tags: ["srafs"]
 
 opc:
-  Iterations: 5
+  Iterations: 80
+  VISUAL_DEBUG: 0
+  SEG_LENGTH: 60
+  SRAF_FORBIDDEN: 40
+  SRAF_ITERATIONS: 40
 
 data:
   data_idx: 3

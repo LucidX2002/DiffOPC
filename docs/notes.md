@@ -1,5 +1,30 @@
 ## Notes
 
+Apr 8
+
+- [ ] SRAF insertion algorithm
+
+  - [ ] Forbidden region
+  - [ ] Get the maximum
+  - [ ] Use the red region
+  - [ ] Will be more stable after 70 epoch
+  - [ ] Once the gradient drop below 0.6
+
+- [ ] SRAF parameters
+
+  - [ ] minimim area
+  - [ ] min_threshold
+  - [ ] min_sraf_seed number
+
+SRAF candidates:
+
+1. Outside the forbidden region
+2.
+
+[contourf algo](https://zj-image-processing.readthedocs.io/zh-cn/latest/matplotlib/%E7%AD%89%E9%AB%98%E7%BA%BF%E5%9B%BE/)
+
+## [marching square algorithm: github](https://github.com/nathanbreitsch/convsquares/blob/main/marching_squares.py)
+
 Apr 1st
 
 - case 4 wrong

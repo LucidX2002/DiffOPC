@@ -6,5 +6,6 @@ tile_size_y: ${opc.TileSizeY}
 offset_x: ${opc.OffsetX}
 offset_y: ${opc.OffsetY}
 seg_length: ${opc.SEG_LENGTH}
+sraf_forbidden: ${opc.SRAF_FORBIDDEN}
 data_idx: 3
 down_scale: 1
