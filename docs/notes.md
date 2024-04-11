@@ -1,5 +1,10 @@
 ## Notes
 
+Apr 10
+
+2. Separated region algorithm for raycasting is more accurate, but not faster.
+3. Faster than the whole region algorithm.
+
 Apr 8
 
 - [ ] SRAF insertion algorithm
@@ -19,7 +24,6 @@ Apr 8
 SRAF candidates:
 
 1. Outside the forbidden region
-2.
 
 [contourf algo](https://zj-image-processing.readthedocs.io/zh-cn/latest/matplotlib/%E7%AD%89%E9%AB%98%E7%BA%BF%E5%9B%BE/)
 

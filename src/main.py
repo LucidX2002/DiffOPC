@@ -83,15 +83,15 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     for i in range(len(dataset)):
         data = dataset[i]
         target, edge_params, metadata, data_idx = data
-        _, _, _, best_mask, best_mask_iter = opc_model.solve(
+        begin = time.time()
+        _, _, best_mask, best_mask_iter = opc_model.solve(
             target, edge_params, metadata, case_id=data_idx, curv=None, verbose=False
         )
+        runtime = time.time() - begin
         if cfg.get("eval"):
-            begin = time.time()
             l2, pvb, epe, shot = evaluation.evaluate(
                 best_mask, target, litho, device=device, scale=1, shots=True
             )
-            runtime = time.time() - begin
             metric_dict["eval_l2"].append(l2)
             metric_dict["eval_pvb"].append(pvb)
             metric_dict["eval_epe"].append(epe)
