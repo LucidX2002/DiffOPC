@@ -17,5 +17,3 @@ SEG_LENGTH: 60
 VISUAL_DEBUG: 0
 VERBOSE: 1
 Evaluation: 1
-StartCase: 1
-EndCase: 11

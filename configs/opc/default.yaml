@@ -7,6 +7,8 @@ WeightPVBL2: 0.5
 WeightPVBand: 0.0
 StepSize: 1
 
+OPT: "adam" # 'adam' or 'sgd'
+
 TileSizeX: 2048
 TileSizeY: 2048
 OffsetX: 512
@@ -16,6 +18,7 @@ ILTSizeY: 1024
 SEG_LENGTH: 60
 
 # SRAF parameters
+IsInsertSRAF: true
 SRAF_FORBIDDEN: 40
 SRAF_ITERATIONS: 70
 SRAF_threshold_min: 0.2
@@ -28,5 +31,3 @@ VISUAL_DEBUG: 0
 VERBOSE: 1
 
 Evaluation: 1
-StartCase: 1
-EndCase: 11

@@ -2,24 +2,52 @@
 
 Apr 10
 
-2. Separated region algorithm for raycasting is more accurate, but not faster.
-3. Faster than the whole region algorithm.
+Multi-level EdgeILT
+
+- [ ] use 512 1024 2048 three levels
+- [ ] when SRAF inseration?
+  - [ ] reduce the SRAF size, once the mid is out of the generation region.
+  - [ ] mask save the binary image and not moving.
+  - [ ] how to remove some small isolated points.
+- [ ] How many round of low-resolution?
+- [ ] How many round of high-resolution?
+- [ ] How to make sure all the edges can be connected with each other?
+- [ ] add curv to reduce the noise points?
+- [ ] Test SGD
+
+baseline
+
+- [ ] Multi-level edge-ILT
+- [ ] STEP resize on the velocity vector.
+- [ ] EPE loss
+- [ ] comparison with previous code
+
+check when to add sraf
+
+- [ ] can add a larger forbidden mask at the beginning.
+
+______________________________________________________________________
+
+Apr 10
+
+1. Separated region algorithm for raycasting is more accurate, but not faster.
+2. Faster than the whole region algorithm.
 
 Apr 8
 
-- [ ] SRAF insertion algorithm
+- [x] SRAF insertion algorithm
 
-  - [ ] Forbidden region
-  - [ ] Get the maximum
-  - [ ] Use the red region
-  - [ ] Will be more stable after 70 epoch
-  - [ ] Once the gradient drop below 0.6
+  - [x] Forbidden region
+  - [x] Get the maximum
+  - [x] Use the red region
+  - [x] Will be more stable after 70 epoch
+  - [x] Once the gradient drop below 0.6
 
-- [ ] SRAF parameters
+- [x] SRAF parameters
 
-  - [ ] minimim area
-  - [ ] min_threshold
-  - [ ] min_sraf_seed number
+  - [x] minimim area
+  - [x] min_threshold
+  - [x] min_sraf_seed number
 
 SRAF candidates:
 
@@ -42,15 +70,16 @@ Some cases that the merge corner will fail.
 
 Mar 31
 
-- [ ] SRAF insertion algorithm
-- [ ] logging system
+- [x] SRAF insertion algorithm
+
+- [x] logging system
+
 - [x] Debug why sometimes the edge can not be merged
-- [ ] Accelerate through offset region
-- [ ] Multi-level edge-ILT
-- [ ] STEP resize on the velocity vector.
-- [ ] EPE loss
-- [ ] organize codes, add logging system
-- [ ] comparison with previous code
+
+- [x] Accelerate through offset region
+
+- [x] organize codes, add logging system
+
 - \[ \]
 
 ## The special corner

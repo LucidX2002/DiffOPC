@@ -89,9 +89,7 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         )
         runtime = time.time() - begin
         if cfg.get("eval"):
-            l2, pvb, epe, shot = evaluation.evaluate(
-                best_mask, target, litho, device=device, scale=1, shots=True
-            )
+            l2, pvb, epe, shot = evaluation.evaluate(best_mask, target, litho, device=device, scale=1, shots=True)
             metric_dict["eval_l2"].append(l2)
             metric_dict["eval_pvb"].append(pvb)
             metric_dict["eval_epe"].append(epe)
@@ -136,9 +134,7 @@ def main(cfg: DictConfig) -> Optional[float]:
     metric_dict, _ = solve(cfg)
 
     # safely retrieve metric value for hydra-based hyperparameter optimization
-    metric_value = get_metric_value(
-        metric_dict=metric_dict, metric_name=cfg.get("optimized_metric")
-    )
+    metric_value = get_metric_value(metric_dict=metric_dict, metric_name=cfg.get("optimized_metric"))
 
     # return optimized metric
     return metric_value
