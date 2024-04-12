@@ -478,6 +478,8 @@ def create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, heig
             # Calculate the cross product of v1 and v2
             cross = v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]
             # Check if the point is inside the polygon
+            # inside the polygon and outside polygon, come and go will be different.
+            # we can only check the horizontal (x) line, using y ray.
             inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | ((v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0))
             # Increment the count for points inside the polygon or on the edge
             count += (inside).int()

@@ -1,5 +1,11 @@
 ## Notes
 
+Apr 12
+
+- [ ] scipy-gpu / opencv-gpu rasterization
+- [ ] mrc aware
+- \[ \]
+
 Apr 11
 
 - [ ] rasteration has bug.
