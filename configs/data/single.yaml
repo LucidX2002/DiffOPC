@@ -7,5 +7,5 @@ offset_x: ${opc.OffsetX}
 offset_y: ${opc.OffsetY}
 seg_length: ${opc.SEG_LENGTH}
 sraf_forbidden: ${opc.SRAF_FORBIDDEN}
-data_idx: 3
+data_idx: 1
 down_scale: 1

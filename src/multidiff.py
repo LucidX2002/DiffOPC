@@ -5,8 +5,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import hydra
 import rootutils
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
+OmegaConf.register_new_resolver("eval", eval)
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 # ------------------------------------------------------------------------------------ #
 # the setup_root above is equivalent to:
@@ -60,8 +61,11 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     log.info(f"Instantiating litho module <{cfg.litho._target_}>")
     litho: LithoSim = hydra.utils.instantiate(cfg.litho, device=device)
 
-    log.info("Instantiating OPC model")
-    opc_model: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc), litho, device)
+    log.info("Instantiating multi-scale OPC model")
+    model_low: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc.low), litho, device)
+    model_mid: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc.mid), litho, device)
+    model_high: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc.high), litho, device)
+    opc_models = {"low": model_low, "mid": model_mid, "high": model_high}
 
     log.info(f"Instantiating dataset <{cfg.data._target_}>")
     dataset: Dataset = hydra.utils.instantiate(cfg.data, device=device)
@@ -80,16 +84,20 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         metric_dict["eval_" + m] = []
 
     # for _, data in enumerate(data_loader):
+    resolution = cfg.opc.common.resolution
     for i in range(len(dataset)):
         data = dataset[i]
-        target, edge_params, metadata, data_idx = data
+        target, edge_params, metadata, data_idx = data[resolution]
+        target_ref = data['high'][0]
         begin = time.time()
-        _, _, best_mask, best_mask_iter = opc_model.solve(
-            target, edge_params, metadata, case_id=data_idx, curv=None, verbose=False
+        _, _, _, best_mask, best_mask_iter = opc_models[resolution].solve(
+            target, edge_params, metadata, case_id=data_idx, curv=None, verbose=cfg.opc[resolution]["VERBOSE"]
         )
         runtime = time.time() - begin
         if cfg.get("eval"):
-            l2, pvb, epe, shot = evaluation.evaluate(best_mask, target, litho, device=device, scale=1, shots=True)
+            l2, pvb, epe, shot = evaluation.evaluate(
+                best_mask, target_ref, litho, device=device, scale=cfg.opc[resolution]["DownScale"], shots=True
+            )
             metric_dict["eval_l2"].append(l2)
             metric_dict["eval_pvb"].append(pvb)
             metric_dict["eval_epe"].append(epe)
@@ -119,7 +127,7 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     return metric_dict, object_dict
 
 
-@hydra.main(version_base="1.3", config_path="../configs", config_name="diffopc.yaml")
+@hydra.main(version_base="1.3", config_path="../configs", config_name="multidiff.yaml")
 def main(cfg: DictConfig) -> Optional[float]:
     """Main entry point for DiffOPC.
 

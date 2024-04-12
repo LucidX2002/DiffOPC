@@ -74,19 +74,17 @@ class SegmentsInitTorch(Initializer):
         sraf_forbidden,
         device,
         dtype=REALTYPE,
+        start_segment_id=0,
+        start_polygon_id=0,
     ):
         self.device = device
         design.center(sizeX, sizeY, offsetX, offsetY)
-        target = torch.tensor(
-            design.mat(sizeX, sizeY, offsetX, offsetY), dtype=dtype, device=device
-        )
+        target = torch.tensor(design.mat(sizeX, sizeY, offsetX, offsetY), dtype=dtype, device=device)
         target_edges = design.polygon_edges
-        seg_params = segment_polygon_edges_with_labels(
-            target_edges, seg_length, segment_id_start=0
-        )
+        seg_params = segment_polygon_edges_with_labels(target_edges, seg_length, start_segment_id=start_segment_id)
 
         edge_params, polygon_ids, direction_vectors, velocities, corner_ids = segs2metadata(
-            seg_params, start_polygon_id=0, device=self.device
+            seg_params, start_polygon_id=start_polygon_id, device=self.device
         )
         shape = (sizeX, sizeY)
         assert polygon_ids.shape[0] == edge_params.shape[0]

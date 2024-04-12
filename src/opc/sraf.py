@@ -104,13 +104,9 @@ def assemble_contours(segments):
 def marching_squares(x):
     offset_tensor = torch.tensor([case_to_offset(i) for i in range(0, 16)], device=x.device)
 
-    degen_offset_tensor = torch.tensor(
-        [case_to_offset_degen(i) for i in range(0, 16)], device=x.device
-    )
+    degen_offset_tensor = torch.tensor([case_to_offset_degen(i) for i in range(0, 16)], device=x.device)
     with torch.no_grad():
-        weight = torch.tensor(
-            [(1, 2), (4, 8)], dtype=x.dtype, requires_grad=False, device=x.device
-        )[None, None, :, :]
+        weight = torch.tensor([(1, 2), (4, 8)], dtype=x.dtype, requires_grad=False, device=x.device)[None, None, :, :]
         conv_out = torch.nn.functional.conv2d(
             x[None, None, :, :],
             weight=weight,
@@ -196,6 +192,15 @@ def polygon_vertices_to_edges(vertices, device):
     return edges
 
 
+def check_sraf_in_boundaries(c_x, c_y, boundaries):
+    (x_min, y_min, x_max, y_max) = boundaries
+    if c_x < x_min or c_x > x_max:
+        return False
+    if c_y < y_min or c_y > y_max:
+        return False
+    return True
+
+
 def get_sraf_edges(
     mask,
     forbidden_mask,
@@ -204,7 +209,10 @@ def get_sraf_edges(
     min_contour_area=400,
     min_contour_wh_rule=20,
     initial_sraf_wh=60,
+    boundaries=None,
 ):
+    assert boundaries is not None
+    # (x_min, y_min, x_max, y_max) = boundaries
     binary_mask = mask.clone().detach()
     grad_map_clone = mask.grad.clone().detach()
     forbidden_mask = forbidden_mask.clone().detach()
@@ -227,7 +235,6 @@ def get_sraf_edges(
         # print(f"area : {area}")
         if area > min_contour_area:
             contour_cartesian_coords = contour[:, [1, 0]]
-
             min_x = contour_cartesian_coords[:, 0].min().item()
             min_y = contour_cartesian_coords[:, 1].min().item()
             max_x = contour_cartesian_coords[:, 0].max().item()
@@ -242,6 +249,8 @@ def get_sraf_edges(
                 hw_ratio = height / width
                 c_x, c_y = find_centroid(contour_cartesian_coords)
                 # seg_length = 60
+                if not check_sraf_in_boundaries(c_x, c_y, boundaries):
+                    continue
                 min_wh = initial_sraf_wh
                 if width < min_wh or height < min_wh:
                     min_wh = min(width, height)

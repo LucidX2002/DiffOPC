@@ -1,108 +1,127 @@
 common:
+  resolution: "high"
   TargetDensity: 0.225
   SigmoidSteepness: 4.0
   WeightEPE: 0.5
   WeightL2: 1.0
   WeightPVBL2: 0.5
   WeightPVBand: 0.0
-  StepSize: 1
+  StepSize: 2
+  VISUAL_DEBUG: 0
+  VERBOSE: 0
   OPT: "adam" # 'adam' or 'sgd'
-
-low:
-  # common parameters
-  TargetDensity: ${common.TargetDensity}
-  SigmoidSteepness: ${common.SigmoidSteepness}
-  WeightEPE: ${common.WeightEPE}
-  WeightL2: ${common.WeightL2}
-  WeightPVBL2: ${common.WeightPVBL2}
-  WeightPVBand: ${common.WeightPVBand}
-  StepSize: ${common.StepSize}
-  OPT: ${common.OPT}
-  # Debug parameters
-  VISUAL_DEBUG: ${common.VISUAL_DEBUG}
-  VERBOSE: ${common.VERBOSE}
-
-  Iterations: 80
-  DownScale: 4
-  TileSizeX: 512
-  TileSizeY: 512
-  OffsetX: 96
-  OffsetY: 96
-  ILTSizeX: 320
-  ILTSizeY: 320
-  SEG_LENGTH: 15
-
-  # SRAF parameters
-  IsInsertSRAF: False
-  SRAF_FORBIDDEN: 10
-  SRAF_ITERATIONS: 70
-  SRAF_threshold_min: 0.2
-  SRAF_contour_area: 25
-  SRAF_min_contour_wh_rule: 5
-  SRAF_initial_sraf_wh: 15
-
-mid:
-  # common parameters
-  TargetDensity: ${common.TargetDensity}
-  SigmoidSteepness: ${common.SigmoidSteepness}
-  WeightEPE: ${common.WeightEPE}
-  WeightL2: ${common.WeightL2}
-  WeightPVBL2: ${common.WeightPVBL2}
-  WeightPVBand: ${common.WeightPVBand}
-  StepSize: ${common.StepSize}
-  OPT: ${common.OPT}
-  # Debug parameters
-  VISUAL_DEBUG: ${common.VISUAL_DEBUG}
-  VERBOSE: ${common.VERBOSE}
-
-  Iterations: 80
-  DownScale: 2
-  TileSizeX: 1024
-  TileSizeY: 1024
-  OffsetX: 192
-  OffsetY: 192
-  ILTSizeX: 640
-  ILTSizeY: 640
-  SEG_LENGTH: 30
-
-  # SRAF parameters
-  IsInsertSRAF: true
-  SRAF_FORBIDDEN: 20
-  SRAF_ITERATIONS: 70
-  SRAF_threshold_min: 0.2
-  SRAF_contour_area: 100
-  SRAF_min_contour_wh_rule: 10
-  SRAF_initial_sraf_wh: 30
-
-high:
-  # common parameters
-  TargetDensity: ${common.TargetDensity}
-  SigmoidSteepness: ${common.SigmoidSteepness}
-  WeightEPE: ${common.WeightEPE}
-  WeightL2: ${common.WeightL2}
-  WeightPVBL2: ${common.WeightPVBL2}
-  WeightPVBand: ${common.WeightPVBand}
-  StepSize: ${common.StepSize}
-  OPT: ${common.OPT}
-  # Debug parameters
-  VISUAL_DEBUG: ${common.VISUAL_DEBUG}
-  VERBOSE: ${common.VERBOSE}
-
-  Iterations: 80
-  DownScale: 1
   TileSizeX: 2048
   TileSizeY: 2048
   OffsetX: 384
   OffsetY: 384
   ILTSizeX: 1280
   ILTSizeY: 1280
+  SEG_LENGTH: 80
+  SRAF_FORBIDDEN: 60
+  SRAF_ITERATIONS: 70
+  SRAF_threshold_min: 0.2
+  SRAF_contour_area: 400
+  SRAF_min_contour_wh_rule: 40 # with or height of sraf less than this, will be ignore
+  SRAF_initial_sraf_wh: 60
+
+low:
+  # common parameters
+  TargetDensity: ${opc.common.TargetDensity}
+  SigmoidSteepness: ${opc.common.SigmoidSteepness}
+  WeightEPE: ${opc.common.WeightEPE}
+  WeightL2: ${opc.common.WeightL2}
+  WeightPVBL2: ${opc.common.WeightPVBL2}
+  WeightPVBand: ${opc.common.WeightPVBand}
+  StepSize: ${opc.common.StepSize}
+  OPT: ${opc.common.OPT}
+  # Debug parameters
+  VISUAL_DEBUG: ${opc.common.VISUAL_DEBUG}
+  VERBOSE: ${opc.common.VERBOSE}
+
+  Iterations: 35
+  SRAF_ITERATIONS: 35
+  DownScale: 4
+  # SEG_LENGTH: ${eval:'${opc.common.SEG_LENGTH} // ${opc.low.DownScale}'} # 15
+  SEG_LENGTH: 40 # 15
+  TileSizeX: ${eval:'${opc.common.TileSizeX} // ${opc.low.DownScale}'} # 512
+  TileSizeY: ${eval:'${opc.common.TileSizeY} // ${opc.low.DownScale}'} # 512
+  OffsetX: ${eval:'${opc.common.OffsetX} // ${opc.low.DownScale}'} # 96
+  OffsetY: ${eval:'${opc.common.OffsetY} // ${opc.low.DownScale}'} # 96
+  ILTSizeX: ${eval:'${opc.common.ILTSizeX} // ${opc.low.DownScale}'} # 320
+  ILTSizeY: ${eval:'${opc.common.ILTSizeY} // ${opc.low.DownScale}'} # 320
+
+  # SRAF parameters
+  IsInsertSRAF: True
+  SRAF_FORBIDDEN: ${eval:'${opc.common.SRAF_FORBIDDEN} // ${opc.low.DownScale}'}
+  SRAF_initial_sraf_wh: ${eval:'${opc.common.SRAF_initial_sraf_wh} // ${opc.low.DownScale}'}
+  SRAF_min_contour_wh_rule: ${eval:'${opc.common.SRAF_min_contour_wh_rule} // ${opc.low.DownScale}'}
+  SRAF_threshold_min: 0.2
+  SRAF_contour_area: 50
+
+mid:
+  # common parameters
+  TargetDensity: ${opc.common.TargetDensity}
+  SigmoidSteepness: ${opc.common.SigmoidSteepness}
+  WeightEPE: ${opc.common.WeightEPE}
+  WeightL2: ${opc.common.WeightL2}
+  WeightPVBL2: ${opc.common.WeightPVBL2}
+  WeightPVBand: ${opc.common.WeightPVBand}
+  StepSize: ${opc.common.StepSize}
+  OPT: ${opc.common.OPT}
+  # Debug parameters
+  VISUAL_DEBUG: ${opc.common.VISUAL_DEBUG}
+  VERBOSE: ${opc.common.VERBOSE}
+
+  Iterations: 40
+  SRAF_ITERATIONS: 70
+  DownScale: 2
+  # SEG_LENGTH: ${eval:'${opc.common.SEG_LENGTH} // ${opc.mid.DownScale}'} # 30
   SEG_LENGTH: 60
+  TileSizeX: ${eval:'${opc.common.TileSizeX} // ${opc.mid.DownScale}'} # 1024
+  TileSizeY: ${eval:'${opc.common.TileSizeY} // ${opc.mid.DownScale}'} # 1024
+  OffsetX: ${eval:'${opc.common.OffsetX} // ${opc.mid.DownScale}'} # 192
+  OffsetY: ${eval:'${opc.common.OffsetY} // ${opc.mid.DownScale}'} # 192
+  ILTSizeX: ${eval:'${opc.common.ILTSizeX} // ${opc.mid.DownScale}'} # 640
+  ILTSizeY: ${eval:'${opc.common.ILTSizeY} // ${opc.mid.DownScale}'} # 640
+
+  # SRAF parameters
+  IsInsertSRAF: true
+  SRAF_FORBIDDEN: 20
+  SRAF_threshold_min: 0.2
+  SRAF_contour_area: 400
+  SRAF_min_contour_wh_rule: 10
+  SRAF_initial_sraf_wh: 30
+
+high:
+  # common parameters
+  TargetDensity: ${opc.common.TargetDensity}
+  SigmoidSteepness: ${opc.common.SigmoidSteepness}
+  WeightEPE: ${opc.common.WeightEPE}
+  WeightL2: ${opc.common.WeightL2}
+  WeightPVBL2: ${opc.common.WeightPVBL2}
+  WeightPVBand: ${opc.common.WeightPVBand}
+  StepSize: ${opc.common.StepSize}
+  OPT: ${opc.common.OPT}
+  # Debug parameters
+  VISUAL_DEBUG: ${opc.common.VISUAL_DEBUG}
+  VERBOSE: ${opc.common.VERBOSE}
+
+  Iterations: 50
+  SRAF_ITERATIONS: 50
+  DownScale: 1
+  # SEG_LENGTH: ${eval:'${opc.common.SEG_LENGTH} // ${opc.high.DownScale}'} # 60
+  SEG_LENGTH: 80
+  TileSizeX: ${eval:'${opc.common.TileSizeX} // ${opc.high.DownScale}'} # 2048
+  TileSizeY: ${eval:'${opc.common.TileSizeY} // ${opc.high.DownScale}'} # 2048
+  OffsetX: ${eval:'${opc.common.OffsetX} // ${opc.high.DownScale}'} # 384
+  OffsetY: ${eval:'${opc.common.OffsetY} // ${opc.high.DownScale}'} # 384
+  ILTSizeX: ${eval:'${opc.common.ILTSizeX} // ${opc.high.DownScale}'} # 1280
+  ILTSizeY: ${eval:'${opc.common.ILTSizeY} // ${opc.high.DownScale}'} # 1280
 
   # SRAF parameters
   IsInsertSRAF: true
   SRAF_FORBIDDEN: 40
-  SRAF_ITERATIONS: 70
   SRAF_threshold_min: 0.2
-  SRAF_contour_area: 400
+  SRAF_contour_area: 800
   SRAF_min_contour_wh_rule: 20
   SRAF_initial_sraf_wh: 60

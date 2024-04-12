@@ -1,10 +1,16 @@
 ## Notes
 
+Apr 11
+
+- [ ] rasteration has bug.
+- [ ] The downscale didn't make it faster.
+- [ ] Should calculate the baseline earlier.
+
 Apr 10
 
 Multi-level EdgeILT
 
-- [ ] use 512 1024 2048 three levels
+- [x] use 512 1024 2048 three levels
 - [ ] when SRAF inseration?
   - [ ] reduce the SRAF size, once the mid is out of the generation region.
   - [ ] mask save the binary image and not moving.

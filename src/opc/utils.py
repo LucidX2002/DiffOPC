@@ -49,9 +49,7 @@ class Basic:
             mask[mask >= self._thresh] = 1.0
             mask[mask < self._thresh] = 0.0
             if scale != 1:
-                mask = torch.nn.functional.interpolate(
-                    mask[None, None, :, :], scale_factor=scale, mode="nearest"
-                )[0, 0]
+                mask = torch.nn.functional.interpolate(mask[None, None, :, :], scale_factor=scale, mode="nearest")[0, 0]
             printedNom, printedMax, printedMin = self._litho(mask)
             binaryNom = torch.zeros_like(printedNom)
             binaryMax = torch.zeros_like(printedMax)
@@ -72,9 +70,7 @@ class Basic:
             mask[mask >= self._thresh] = 1.0
             mask[mask < self._thresh] = 0.0
             if scale != 1:
-                mask = torch.nn.functional.interpolate(
-                    mask[None, None, :, :], scale_factor=scale, mode="nearest"
-                )[0, 0]
+                mask = torch.nn.functional.interpolate(mask[None, None, :, :], scale_factor=scale, mode="nearest")[0, 0]
             printedNom, printedMax, printedMin = self._litho(mask)
             binaryNom = torch.zeros_like(printedNom)
             binaryMax = torch.zeros_like(printedMax)
@@ -118,9 +114,7 @@ def boundaries(target):
     lowerleft = padded[:-2, :-2] == 1
     lowerright = padded[:-2, 2:] == 1
     boundary = target == 1
-    boundary[
-        upper & lower & left & right & upperleft & upperright & lowerleft & lowerright
-    ] = False
+    boundary[upper & lower & left & right & upperleft & upperright & lowerleft & lowerright] = False
 
     padded = func.pad(boundary[None, None, :, :], pad=(1, 1, 1, 1))[0, 0]
     upper = padded[2:, 1:-1] == 1
@@ -132,9 +126,7 @@ def boundaries(target):
     vertical = center.clone()
     vertical[left & right] = False
     vsites = vertical.nonzero()
-    vindices = np.lexsort(
-        (vsites[:, 0].detach().cpu().numpy(), vsites[:, 1].detach().cpu().numpy())
-    )
+    vindices = np.lexsort((vsites[:, 0].detach().cpu().numpy(), vsites[:, 1].detach().cpu().numpy()))
     vsites = vsites[vindices]
     vstart = torch.cat(
         (
@@ -156,9 +148,7 @@ def boundaries(target):
     horizontal = center.clone()
     horizontal[upper & lower] = False
     hsites = horizontal.nonzero()
-    hindices = np.lexsort(
-        (hsites[:, 1].detach().cpu().numpy(), hsites[:, 0].detach().cpu().numpy())
-    )
+    hindices = np.lexsort((hsites[:, 1].detach().cpu().numpy(), hsites[:, 0].detach().cpu().numpy()))
     hsites = hsites[hindices]
     hstart = torch.cat(
         (
@@ -250,7 +240,7 @@ def visualizeBoundaries(target, vposes, hposes):
     plt.show()
 
 
-def segment_polygon_edges_with_labels(polygon_edges, seg_length, segment_id_start=0, device="cpu"):
+def segment_polygon_edges_with_labels(polygon_edges, seg_length, start_segment_id=0, device="cpu"):
     """Segments vertical and horizontal lines into smaller segments of a fixed length, labels
     vertical (V), horizontal (H), corner vertical (CV), and corner horizontal (CH) segments, and
     assigns a unique ID to each segment.
@@ -284,16 +274,8 @@ def segment_polygon_edges_with_labels(polygon_edges, seg_length, segment_id_star
         if length <= 2 * seg_length:
             # Treat both ends as corners if the segment is short
             # seg_type_label = "C" + seg_type_label
-            segments.extend(
-                create_segment(
-                    edge[:, 0], midpoint, seg_type_label, segment_id, True, False, direction
-                )
-            )
-            segments.extend(
-                create_segment(
-                    midpoint, edge[:, 1], seg_type_label, segment_id + 1, False, True, direction
-                )
-            )
+            segments.extend(create_segment(edge[:, 0], midpoint, seg_type_label, segment_id, True, False, direction))
+            segments.extend(create_segment(midpoint, edge[:, 1], seg_type_label, segment_id + 1, False, True, direction))
             segment_id += 2
         else:
             steps_to_edge = length / 2 / seg_length
@@ -306,9 +288,7 @@ def segment_polygon_edges_with_labels(polygon_edges, seg_length, segment_id_star
                     else midpoint + direction * (i * seg_length - min(seg_length / 2, length / 2))
                 )
                 end_point = (
-                    edge[:, 1]
-                    if i == full_steps
-                    else midpoint + direction * (i * seg_length + min(seg_length / 2, length / 2))
+                    edge[:, 1] if i == full_steps else midpoint + direction * (i * seg_length + min(seg_length / 2, length / 2))
                 )
 
                 start_point, end_point = start_point.round(), end_point.round()
@@ -356,9 +336,7 @@ def segment_polygon_edges_with_labels(polygon_edges, seg_length, segment_id_star
         # the last segment should be the end of the polygon
         return segments, segment_id
 
-    def create_segment(
-        start_point, end_point, seg_type_label, segment_id, is_start, is_end, direction
-    ):
+    def create_segment(start_point, end_point, seg_type_label, segment_id, is_start, is_end, direction):
         return [
             {
                 "segment": torch.stack([start_point, end_point], dim=1).requires_grad_(),
@@ -372,7 +350,7 @@ def segment_polygon_edges_with_labels(polygon_edges, seg_length, segment_id_star
         ]
 
     all_segments = []
-    segment_id = segment_id_start  # Initialize global segment ID
+    segment_id = start_segment_id  # Initialize global segment ID
     # Process vertical segments
     for poly in polygon_edges:
         poly_segments = []
@@ -437,9 +415,7 @@ def create_binary_mask(polygons, width, height, device=None):
             # Check if the point is on the edge
             on_edge = (v1[..., 0] == 0) & (v1[..., 1] >= 0) & (v2[..., 1] < 0)
             # Check if the point is inside the polygon
-            inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | (
-                (v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0)
-            )
+            inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | ((v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0))
             # Increment the count for points inside the polygon or on the edge
             count += (inside | on_edge).int()
     # If the count is odd, the point is inside at least one polygon
@@ -491,8 +467,9 @@ def create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, heig
         count = torch.zeros_like(grid_x, dtype=torch.int32)
 
         # Create edges by connecting consecutive vertices and closing the polygon
-        polygon_edges = torch.cat([polygon_vertices, polygon_vertices[:1]], dim=0)
-
+        # polygon_edges = torch.cat([polygon_vertices, polygon_vertices[:1]], dim=0)
+        polygon_edges = polygon_vertices
+        # trace_arr = []
         for i in range(len(polygon_edges) - 1):
             # Calculate the vectors from each point to the edge endpoints
             v1 = polygon_edges[i] - points
@@ -500,18 +477,10 @@ def create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, heig
 
             # Calculate the cross product of v1 and v2
             cross = v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]
-
-            # Check if the point is on the edge
-            on_edge = (v1[..., 0] == 0) & (v1[..., 1] >= 0) & (v2[..., 1] < 0)
-
             # Check if the point is inside the polygon
-            inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | (
-                (v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0)
-            )
-
+            inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | ((v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0))
             # Increment the count for points inside the polygon or on the edge
-            count += (inside | on_edge).int()
-
+            count += (inside).int()
         # If the count is odd, the point is inside the current polygon
         mask[min_y.int() : max_y.int() + 1, min_x.int() : max_x.int() + 1] |= count % 2 == 1
     return mask
@@ -578,9 +547,7 @@ def edges_to_vertices(edges, polygon_ids):
         vertices_list.append(polygon_vertices)
 
         # Create polygon IDs for each vertex
-        polygon_ids_for_vertices = torch.full(
-            (polygon_vertices.shape[0],), idx, dtype=polygon_ids.dtype
-        )
+        polygon_ids_for_vertices = torch.full((polygon_vertices.shape[0],), idx, dtype=polygon_ids.dtype)
         vertices_polygon_ids_list.append(polygon_ids_for_vertices)
 
     # Concatenate the vertices and polygon IDs from all polygons
@@ -791,24 +758,16 @@ def check(image, sample, target, direction):
         if (target[sample[0, 0].long(), sample[0, 1].long() + 1] == 1) and (
             target[sample[0, 0].long(), sample[0, 1].long() - 1] == 0
         ):  # left ,x small
-            inner = sample + torch.tensor(
-                [0, EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device
-            )
-            outer = sample + torch.tensor(
-                [0, -EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device
-            )
+            inner = sample + torch.tensor([0, EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device)
+            outer = sample + torch.tensor([0, -EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device)
             inner = sample[image[inner[:, 0].long(), inner[:, 1].long()] == 0, :]
             outer = sample[image[outer[:, 0].long(), outer[:, 1].long()] == 1, :]
 
         elif (target[sample[0, 0].long(), sample[0, 1].long() + 1] == 0) and (
             target[sample[0, 0].long(), sample[0, 1].long() - 1] == 1
         ):  # right, x large
-            inner = sample + torch.tensor(
-                [0, -EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device
-            )
-            outer = sample + torch.tensor(
-                [0, EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device
-            )
+            inner = sample + torch.tensor([0, -EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device)
+            outer = sample + torch.tensor([0, EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device)
             inner = sample[image[inner[:, 0].long(), inner[:, 1].long()] == 0, :]
             outer = sample[image[outer[:, 0].long(), outer[:, 1].long()] == 1, :]
 
@@ -816,24 +775,16 @@ def check(image, sample, target, direction):
         if (target[sample[0, 0].long() + 1, sample[0, 1].long()] == 1) and (
             target[sample[0, 0].long() - 1, sample[0, 1].long()] == 0
         ):  # up, y small
-            inner = sample + torch.tensor(
-                [EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device
-            )
-            outer = sample + torch.tensor(
-                [-EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device
-            )
+            inner = sample + torch.tensor([EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device)
+            outer = sample + torch.tensor([-EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device)
             inner = sample[image[inner[:, 0].long(), inner[:, 1].long()] == 0, :]
             outer = sample[image[outer[:, 0].long(), outer[:, 1].long()] == 1, :]
 
         elif (target[sample[0, 0].long() + 1, sample[0, 1].long()] == 0) and (
             target[sample[0, 0].long() - 1, sample[0, 1].long()] == 1
         ):  # low, y large
-            inner = sample + torch.tensor(
-                [-EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device
-            )
-            outer = sample + torch.tensor(
-                [EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device
-            )
+            inner = sample + torch.tensor([-EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device)
+            outer = sample + torch.tensor([EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device)
             inner = sample[image[inner[:, 0].long(), inner[:, 1].long()] == 0, :]
             outer = sample[image[outer[:, 0].long(), outer[:, 1].long()] == 1, :]
 
@@ -937,9 +888,7 @@ class EPEChecker:
             mask[mask >= self._thresh] = 1.0
             mask[mask < self._thresh] = 0.0
             if scale != 1:
-                mask = torch.nn.functional.interpolate(
-                    mask[None, None, :, :], scale_factor=scale, mode="nearest"
-                )[0, 0]
+                mask = torch.nn.functional.interpolate(mask[None, None, :, :], scale_factor=scale, mode="nearest")[0, 0]
             printedNom, printedMax, printedMin = self._litho(mask)
             binaryNom = torch.zeros_like(printedNom)
             binaryNom[printedNom >= self._thresh] = 1
@@ -965,9 +914,7 @@ class ShotCounter:
     def run(self, mask, target=None, scale=1, shape=(512, 512)):
         if not isinstance(mask, torch.Tensor):
             mask = torch.tensor(mask, dtype=REALTYPE, device=self._device)
-        image = torch.nn.functional.interpolate(
-            mask[None, None, :, :], size=shape, mode="nearest"
-        )[0, 0]
+        image = torch.nn.functional.interpolate(mask[None, None, :, :], size=shape, mode="nearest")[0, 0]
         image = image.detach().cpu().numpy().astype(np.uint8)
         comps, labels, stats, centroids = cv2.connectedComponentsWithStats(image)
         rectangles = []
@@ -981,9 +928,7 @@ class ShotCounter:
             x_data = np.unique(np.sort(pixels[:, 0]))
             y_data = np.unique(np.sort(pixels[:, 1]))
             if x_data.shape[0] == 1 or y_data.shape[0] == 1:
-                rectangles.append(
-                    tools.Rectangle(x_data.min(), x_data.max(), y_data.min(), y_data.max())
-                )
+                rectangles.append(tools.Rectangle(x_data.min(), x_data.max(), y_data.min(), y_data.max()))
                 continue
             (rects, sep) = proc.decompose(pixels, 4)
             rectangles.extend(rects)
@@ -1022,9 +967,7 @@ def find_intersection_and_adjust(line1, line2):
     # Adjust lines to meet at the intersection point
     if is_line1_vertical:
         # Adjust line1 (vertical) end point to intersection
-        new_line1 = torch.tensor(
-            [[vertical_line[0, 0], vertical_line[0, 0]], [vertical_line[1, 0], intersection_y]]
-        )
+        new_line1 = torch.tensor([[vertical_line[0, 0], vertical_line[0, 0]], [vertical_line[1, 0], intersection_y]])
 
         # Adjust line2 (horizontal) start point to intersection
         new_line2 = torch.tensor(
@@ -1043,9 +986,7 @@ def find_intersection_and_adjust(line1, line2):
         )
 
         # Adjust line2 (vertical) start point to intersection
-        new_line2 = torch.tensor(
-            [[vertical_line[0, 1], vertical_line[0, 1]], [intersection_y, vertical_line[1, 1]]]
-        )
+        new_line2 = torch.tensor([[vertical_line[0, 1], vertical_line[0, 1]], [intersection_y, vertical_line[1, 1]]])
 
     # print(new_line1, '\n',  new_line2, '\n', intersection_point, '\n')
     # print('line1', line1, '\n', 'line2', line2)
@@ -1075,18 +1016,14 @@ def adjust_corner_edges(edge_params, corner_edges):
     adjusted_edges = edge_params.clone().detach()
 
     # Adjust the last edge with the first edge to ensure they meet at a corner
-    adjusted_edges[-1], adjusted_edges[0], _ = find_intersection_and_adjust(
-        edge_params[-1], edge_params[0]
-    )
+    adjusted_edges[-1], adjusted_edges[0], _ = find_intersection_and_adjust(edge_params[-1], edge_params[0])
 
     # Adjust other specified corner edges
     i = 1
     while i < N - 1:
         if corner_edges[i]:
             # Adjust this corner edge with the next edge
-            adjusted_edges[i], adjusted_edges[i + 1], _ = find_intersection_and_adjust(
-                edge_params[i], edge_params[i + 1]
-            )
+            adjusted_edges[i], adjusted_edges[i + 1], _ = find_intersection_and_adjust(edge_params[i], edge_params[i + 1])
             i += 2
         else:
             i += 1
@@ -1121,9 +1058,7 @@ def adjust_edges_by_polygon(edge_params, corner_edges, polygon_ids):
         # using the function you have for adjusting corner edges. This is a placeholder
         # and should be replaced with the actual logic you intend to use.
         # print(f"polygon {poly_id}")
-        adjusted_poly_edges = adjust_corner_edges(
-            poly_edges, poly_corners
-        )  # This needs to be defined.
+        adjusted_poly_edges = adjust_corner_edges(poly_edges, poly_corners)  # This needs to be defined.
 
         # Update the adjusted edges back into the main tensor
         adjusted_edges[poly_mask] = adjusted_poly_edges
@@ -1256,9 +1191,7 @@ def test_metadata():
         design = glp_seg.Design(maskfile)
         shape = (2048, 2048)
         offset = (512, 512)
-        target, edge_params, metadata = SegLoader.SegmentsInitTorch().run(
-            design, shape[0], shape[1], offset[0], offset[1]
-        )
+        target, edge_params, metadata = SegLoader.SegmentsInitTorch().run(design, shape[0], shape[1], offset[0], offset[1])
         direction_vectors = metadata["direction_vectors"]
         velocities = metadata["velocities"]
         print(edge_params[1])
@@ -1293,17 +1226,11 @@ def test_seg_vis():
         segs = segment_polygon_edges_with_labels(design_edges, seg_length)
         print(segs)
         seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg.png"
-        visualize_segments_with_labels(
-            target, segs, only_start=False, only_end=False, seg_name=seg_name
-        )
+        visualize_segments_with_labels(target, segs, only_start=False, only_end=False, seg_name=seg_name)
         seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_start.png"
-        visualize_segments_with_labels(
-            target, segs, only_start=True, only_end=False, seg_name=seg_name
-        )
+        visualize_segments_with_labels(target, segs, only_start=True, only_end=False, seg_name=seg_name)
         seg_name = f"./tmp/segs/ICCAD2013/M1_test{i}_seg_end.png"
-        visualize_segments_with_labels(
-            target, segs, only_start=False, only_end=True, seg_name=seg_name
-        )
+        visualize_segments_with_labels(target, segs, only_start=False, only_end=True, seg_name=seg_name)
 
 
 def test_vel_vis():

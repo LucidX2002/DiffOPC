@@ -3,7 +3,7 @@ TargetDensity: 0.225
 SigmoidSteepness: 4.0
 WeightEPE: 0.5
 WeightL2: 1.0
-WeightPVBL2: 0.5
+WeightPVBL2: 0.9
 WeightPVBand: 0.0
 StepSize: 1
 
@@ -16,6 +16,7 @@ OffsetY: 512
 ILTSizeX: 1024
 ILTSizeY: 1024
 SEG_LENGTH: 60
+DownScale: 1
 
 # SRAF parameters
 IsInsertSRAF: true
@@ -23,11 +24,11 @@ SRAF_FORBIDDEN: 40
 SRAF_ITERATIONS: 70
 SRAF_threshold_min: 0.2
 SRAF_contour_area: 400
-SRAF_min_contour_wh_rule: 20
+SRAF_min_contour_wh_rule: 40
 SRAF_initial_sraf_wh: 60
 
 # Debug parameters
 VISUAL_DEBUG: 0
-VERBOSE: 1
+VERBOSE: 0
 
 Evaluation: 1

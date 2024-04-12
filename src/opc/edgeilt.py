@@ -1,3 +1,4 @@
+import os
 import sys
 
 sys.path.append(".")
@@ -58,18 +59,11 @@ class EdgeILTCfg:
             "OffsetY",
             "ILTSizeX",
             "ILTSizeY",
+            "DownScale",
         ]
         for key in required:
             assert key in self._config, f"[SimpleILT]: Cannot find the config {key}."
-        intfields = [
-            "Iterations",
-            "TileSizeX",
-            "TileSizeY",
-            "OffsetX",
-            "OffsetY",
-            "ILTSizeX",
-            "ILTSizeY",
-        ]
+        intfields = ["Iterations", "TileSizeX", "TileSizeY", "OffsetX", "OffsetY", "ILTSizeX", "ILTSizeY", "DownScale"]
         for key in intfields:
             self._config[key] = int(self._config[key])
         floatfields = [
@@ -102,7 +96,8 @@ def get_avg_grad(edge, grad_output):
     return average_value
 
 
-def save_masks(all_masks, case_id):
+def save_masks(all_masks, save_dir, case_id):
+    os.makedirs(save_dir, exist_ok=True)
     fig, axs = plt.subplots(2, 4, figsize=(20, 12))
     if len(all_masks) >= 8:
         all_masks = all_masks[-8:]
@@ -111,8 +106,6 @@ def save_masks(all_masks, case_id):
             ax.imshow(all_masks[i]["mask"])
             ax.set_title(f"Iteration {all_masks[i]['iteration']}")
     plt.tight_layout()
-    save_dir = Path(f"./tmp/report_sraf/M1_test{case_id}")
-    save_dir.mkdir(parents=True, exist_ok=True)
     plt.savefig(f"{str(save_dir)}/EdgeILT_M1_test{case_id}_mask.png", dpi=300)
 
     for m in all_masks:
@@ -121,26 +114,6 @@ def save_masks(all_masks, case_id):
             m["mask"],
             dpi=300,
         )
-
-    # plt.show()
-
-    # fig, axs = plt.subplots(2, 4, figsize=(20, 12))
-    # if len(all_mask_edges) >= 8:
-    #     all_mask_edges = all_mask_edges[-8:]
-    # for i, ax in enumerate(axs.flat):
-    #     if i < len(all_mask_edges):
-    #         ax.imshow(all_mask_edges[i]["mask"])
-    #         ax.set_title(f"Iteration {all_masks[i]['iteration']}")
-    # plt.tight_layout()
-    # plt.savefig(f"{str(save_dir)}/EdgeILT_M1_test{case_id}_edge.png", dpi=300)
-
-    # for m in all_mask_edges:
-    #     plt.imsave(
-    #         f"{str(save_dir)}/EdgeILT_test{idx}_edge_{m['iteration']}.png",
-    #         m["mask"],
-    #         dpi=300,
-    #     )
-    # plt.show()
 
 
 class StraightThroughEstimator(torch.autograd.Function):
@@ -241,9 +214,7 @@ class EdgeILTSolver:
 
         self.grad_queue = [-1e5] * 5
 
-    def trigger_insert_sraf(self, mask, iter_idx):
-        if iter_idx < 70:
-            return False
+    def trigger_insert_sraf(self, mask):
         if mask.grad is not None:
             min_grad = mask.grad.min().abs()
             # print(f"min: {min_grad}")
@@ -251,7 +222,7 @@ class EdgeILTSolver:
             if len(self.grad_queue) > 5:
                 self.grad_queue.pop(0)
             queue_max = max(self.grad_queue)
-            # print(f"queue_max: {queue_max}")
+            print(f"queue_max: {queue_max}")
             if queue_max < 0.6:
                 return True
             else:
@@ -261,19 +232,24 @@ class EdgeILTSolver:
         edge_params = edge_params.clone().detach()
         forbidden_mask, _ = edge_params2forbidden(edge_params, metadata)
         sraf_threshold_min = self._config["SRAF_threshold_min"]
+        x_min = self._config["OffsetX"] - self._config["SEG_LENGTH"]
+        y_min = self._config["OffsetY"] - self._config["SEG_LENGTH"]
+        x_max = self._config["OffsetX"] + self._config["ILTSizeX"] + self._config["SEG_LENGTH"]
+        y_max = self._config["OffsetY"] + self._config["ILTSizeY"] + self._config["SEG_LENGTH"]
         sraf_edges = get_sraf_edges(
             mask,
             forbidden_mask,
             threshold_min=sraf_threshold_min,
             threshold_max=1,
-            min_contour_area=400,
-            min_contour_wh_rule=20,
-            initial_sraf_wh=60,
+            min_contour_area=self._config["SRAF_contour_area"],
+            min_contour_wh_rule=self._config["SRAF_min_contour_wh_rule"],
+            initial_sraf_wh=self._config["SRAF_initial_sraf_wh"],
+            boundaries=(x_min, y_min, x_max, y_max),
         )
-        # print(sraf_edges)
+        assert len(sraf_edges) > 0, "No SRAF edges found!"
         start_polygon_id = metadata["polygon_ids"][-1].item() + 1
-        segment_id_start = edge_params.shape[0] + 1
-        sraf_seg_params = segment_polygon_edges_with_labels(sraf_edges, seg_length, segment_id_start)
+        start_segment_id = edge_params.shape[0] + 1
+        sraf_seg_params = segment_polygon_edges_with_labels(sraf_edges, seg_length, start_segment_id)
 
         (
             sraf_edge_params,
@@ -289,12 +265,24 @@ class EdgeILTSolver:
         metadata["corner_ids"] = torch.cat([metadata["corner_ids"], sraf_corner_ids], dim=0)
         return new_edge_params, metadata
 
-    def cal_loss(self, target, printedNom, printedMax, printedMin):
+    def cal_loss(self, target, printedNom, printedMax, printedMin, kernelCurv=None):
         l2loss = func.mse_loss(printedNom, target, reduction="sum")
         pvbl2 = func.mse_loss(printedMax, target, reduction="sum") + func.mse_loss(printedMin, target, reduction="sum")
         pvbloss = func.mse_loss(printedMax, printedMin, reduction="sum")
         pvband = torch.sum((printedMax >= self._config["TargetDensity"]) != (printedMin >= self._config["TargetDensity"]))
-        loss = self._config["WeightL2"] * l2loss + self._config["WeightPVBL2"] * pvbl2 + self._config["WeightPVBand"] * pvbloss
+        if kernelCurv is not None:
+            curvature = func.conv2d(printedNom[None, None, :, :], kernelCurv[None, None, :, :])[0, 0]
+            losscurv = func.mse_loss(curvature, torch.zeros_like(curvature), reduction="sum")
+            loss = (
+                self._config["WeightL2"] * l2loss
+                + self._config["WeightPVBL2"] * pvbl2
+                + self._config["WeightPVBand"] * pvbloss
+                + 2e2 * losscurv
+            )
+        else:
+            loss = (
+                self._config["WeightL2"] * l2loss + self._config["WeightPVBL2"] * pvbl2 + self._config["WeightPVBand"] * pvbloss
+            )
         return loss, l2loss, pvband, pvbl2, pvbloss
 
     def solve(self, target, edge_params, metadata, case_id=1, seg_length=60, curv=None, verbose=0):
@@ -318,37 +306,32 @@ class EdgeILTSolver:
         # debug
         new_edge_params = None
         opc_idx = 0
+        kernelCurv = torch.tensor(
+            [[-1.0 / 16, 5.0 / 16, -1.0 / 16], [5.0 / 16, -1.0, 5.0 / 16], [-1.0 / 16, 5.0 / 16, -1.0 / 16]],
+            dtype=REALTYPE,
+            device=edge_params.device,
+        )
 
         # =========================================================================
         # OPC loop
         # =========================================================================
         for idx in range(self._config["Iterations"]):
-            # print(f"EdgeILT Iteration {idx}")
             mask, printedNom, printedMax, printedMin, edge_params_clone = self._edgeILT(edge_params, metadata, idx)
+            loss, l2loss, pvband, _, _ = self.cal_loss(target, printedNom, printedMax, printedMin, kernelCurv=kernelCurv)
 
-            # if self._config["VISUAL_DEBUG"]:
-            #     if idx % 5 == 0:
-            #         mask_cpu = mask.clone().detach().cpu().numpy()
-            #         all_masks.append({"mask": mask_cpu, "iteration": idx})
-            # shape = (self._config["TileSizeX"], self._config["TileSizeY"])
-            # mask_edge_cpu = draw_edge_params(edge_params_clone, shape, show=False)
-            # all_mask_edges.append({"mask": mask_edge_cpu, "iteration": idx})
+            if self._config["VISUAL_DEBUG"]:
+                if idx % 40 == 0:
+                    mask_cpu = mask.clone().detach().cpu().numpy()
+                    all_masks.append({"mask": mask_cpu, "iteration": idx})
 
-            (
-                loss,
-                l2loss,
-                pvband,
-                _,
-                _,
-            ) = self.cal_loss(target, printedNom, printedMax, printedMin)
+            if not self._config["IsInsertSRAF"]:
+                if bestParams is None or bestMask is None or loss < lossMin:
+                    lossMin, l2Min, pvbMin = loss, l2loss, pvband
+                    bestParams = edge_params_clone
+                    bestMask = mask.detach().clone()
+                    bestMaskIter = idx
 
-            if bestParams is None or bestMask is None or loss < lossMin:
-                lossMin, l2Min, pvbMin = loss, l2loss, pvband
-                bestParams = edge_params_clone
-                bestMask = mask.detach().clone()
-                bestMaskIter = idx
-
-            if verbose == 1:
+            if verbose:
                 print(f"[OPC Iteration {idx}]: L2 = {l2loss.item():.0f}; PVBand: {pvband.item():.0f}")
 
             opt.zero_grad()
@@ -357,11 +340,15 @@ class EdgeILTSolver:
             opc_idx = idx
 
             if self._config["IsInsertSRAF"]:
-                if self.trigger_insert_sraf(mask, iter_idx=idx) or idx >= 70:
+                # if self.trigger_insert_sraf(mask) or idx >= 70:
+                if idx >= self._config["Iterations"] - 1:
+                    if self._config["VISUAL_DEBUG"]:
+                        mask_cpu = mask.clone().detach().cpu().numpy()
+                        all_masks.append({"mask": mask_cpu, "iteration": idx})
                     # print("Insert SRAF!")
                     new_edge_params, new_metadata = self.init_sraf_params(mask, edge_params, metadata, seg_length)
                     opc_idx = idx
-                    print(f"Insert SRAF at iteration {opc_idx}")
+                    # print(f"Insert SRAF at iteration {opc_idx}")
                     break
 
         # SRAF loop
@@ -373,28 +360,17 @@ class EdgeILTSolver:
                 opt = optim.Adam([new_edge_params], lr=self._config["StepSize"])
 
             for idx in range(self._config["SRAF_ITERATIONS"]):
-                # print(f"EdgeILT Iteration {idx}")
                 mask, printedNom, printedMax, printedMin, new_edge_params_clone = self._edgeILT(
                     new_edge_params, new_metadata, idx
                 )
-
-                (
-                    loss,
-                    l2loss,
-                    pvband,
-                    _,
-                    _,
-                ) = self.cal_loss(target, printedNom, printedMax, printedMin)
+                loss, l2loss, pvband, _, _ = self.cal_loss(target, printedNom, printedMax, printedMin, kernelCurv=kernelCurv)
 
                 if self._config["VISUAL_DEBUG"]:
-                    if idx % 5 == 0:
+                    if idx % 20 == 0:
                         mask_cpu = mask.clone().detach().cpu().numpy()
                         all_masks.append({"mask": mask_cpu, "iteration": opc_idx + idx})
-                        # shape = (self._config["TileSizeX"], self._config["TileSizeY"])
-                        # mask_edge_cpu = draw_edge_params(edge_params_clone, shape, show=False)
-                        # all_mask_edges.append({"mask": mask_edge_cpu, "iteration": idx})
 
-                if verbose == 1:
+                if verbose:
                     print(f"[OPC: {opc_idx}, SRAF Iteration {idx}]: L2 = {l2loss.item():.0f}; PVBand: {pvband.item():.0f}")
 
                 if bestParams is None or bestMask is None or loss < lossMin:
@@ -409,7 +385,14 @@ class EdgeILTSolver:
 
         # Visual Debug
         if self._config["VISUAL_DEBUG"]:
-            save_masks(all_masks, case_id)
+            report_dir = "report_sraf" if self._config["IsInsertSRAF"] else "report"
+            if self._config["DownScale"] != 1:
+                down_dir = f"down{self._config['DownScale']}x"
+                save_dir = f"./tmp/{report_dir}/{down_dir}/M1_test{case_id}"
+            else:
+                save_dir = f"./tmp/{report_dir}/M1_test{case_id}"
+            all_masks.append({"mask": bestMask.cpu().numpy(), "iteration": bestMaskIter})
+            save_masks(all_masks, save_dir, case_id)
 
         return l2Min, pvbMin, bestParams, bestMask, bestMaskIter
 
