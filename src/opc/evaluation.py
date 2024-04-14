@@ -1,14 +1,10 @@
 import sys
 
 sys.path.append(".")
-import math
-import multiprocessing as mp
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as func
-import torch.optim as optim
 
 from src.data.datatype import REALTYPE
 from src.data.loaders import glp_seg
@@ -35,9 +31,7 @@ class Basic:
             mask[mask >= self._thresh] = 1.0
             mask[mask < self._thresh] = 0.0
             if scale != 1:
-                mask = torch.nn.functional.interpolate(
-                    mask[None, None, :, :], scale_factor=scale, mode="nearest"
-                )[0, 0]
+                mask = torch.nn.functional.interpolate(mask[None, None, :, :], scale_factor=scale, mode="nearest")[0, 0]
             printedNom, printedMax, printedMin = self._litho(mask)
             binaryNom = torch.zeros_like(printedNom)
             binaryMax = torch.zeros_like(printedMax)
@@ -59,9 +53,7 @@ class Basic:
             mask[mask >= self._thresh] = 1.0
             mask[mask < self._thresh] = 0.0
             if scale != 1:
-                mask = torch.nn.functional.interpolate(
-                    mask[None, None, :, :], scale_factor=scale, mode="nearest"
-                )[0, 0]
+                mask = torch.nn.functional.interpolate(mask[None, None, :, :], scale_factor=scale, mode="nearest")[0, 0]
             printedNom, printedMax, printedMin = self._litho(mask)
             binaryNom = torch.zeros_like(printedNom)
             binaryMax = torch.zeros_like(printedMax)
@@ -96,9 +88,7 @@ def boundaries(target):
     lowerleft = padded[:-2, :-2] == 1
     lowerright = padded[:-2, 2:] == 1
     boundary = target == 1
-    boundary[
-        upper & lower & left & right & upperleft & upperright & lowerleft & lowerright
-    ] = False
+    boundary[upper & lower & left & right & upperleft & upperright & lowerleft & lowerright] = False
 
     padded = func.pad(boundary[None, None, :, :], pad=(1, 1, 1, 1))[0, 0]
     upper = padded[2:, 1:-1] == 1
@@ -110,9 +100,7 @@ def boundaries(target):
     vertical = center.clone()
     vertical[left & right] = False
     vsites = vertical.nonzero()
-    vindices = np.lexsort(
-        (vsites[:, 0].detach().cpu().numpy(), vsites[:, 1].detach().cpu().numpy())
-    )
+    vindices = np.lexsort((vsites[:, 0].detach().cpu().numpy(), vsites[:, 1].detach().cpu().numpy()))
     vsites = vsites[vindices]
     vstart = torch.cat(
         (
@@ -134,9 +122,7 @@ def boundaries(target):
     horizontal = center.clone()
     horizontal[upper & lower] = False
     hsites = horizontal.nonzero()
-    hindices = np.lexsort(
-        (hsites[:, 1].detach().cpu().numpy(), hsites[:, 0].detach().cpu().numpy())
-    )
+    hindices = np.lexsort((hsites[:, 1].detach().cpu().numpy(), hsites[:, 0].detach().cpu().numpy()))
     hsites = hsites[hindices]
     hstart = torch.cat(
         (
@@ -162,24 +148,16 @@ def check(image, sample, target, direction):
         if (target[sample[0, 0].long(), sample[0, 1].long() + 1] == 1) and (
             target[sample[0, 0].long(), sample[0, 1].long() - 1] == 0
         ):  # left ,x small
-            inner = sample + torch.tensor(
-                [0, EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device
-            )
-            outer = sample + torch.tensor(
-                [0, -EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device
-            )
+            inner = sample + torch.tensor([0, EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device)
+            outer = sample + torch.tensor([0, -EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device)
             inner = sample[image[inner[:, 0].long(), inner[:, 1].long()] == 0, :]
             outer = sample[image[outer[:, 0].long(), outer[:, 1].long()] == 1, :]
 
         elif (target[sample[0, 0].long(), sample[0, 1].long() + 1] == 0) and (
             target[sample[0, 0].long(), sample[0, 1].long() - 1] == 1
         ):  # right, x large
-            inner = sample + torch.tensor(
-                [0, -EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device
-            )
-            outer = sample + torch.tensor(
-                [0, EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device
-            )
+            inner = sample + torch.tensor([0, -EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device)
+            outer = sample + torch.tensor([0, EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device)
             inner = sample[image[inner[:, 0].long(), inner[:, 1].long()] == 0, :]
             outer = sample[image[outer[:, 0].long(), outer[:, 1].long()] == 1, :]
 
@@ -187,24 +165,16 @@ def check(image, sample, target, direction):
         if (target[sample[0, 0].long() + 1, sample[0, 1].long()] == 1) and (
             target[sample[0, 0].long() - 1, sample[0, 1].long()] == 0
         ):  # up, y small
-            inner = sample + torch.tensor(
-                [EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device
-            )
-            outer = sample + torch.tensor(
-                [-EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device
-            )
+            inner = sample + torch.tensor([EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device)
+            outer = sample + torch.tensor([-EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device)
             inner = sample[image[inner[:, 0].long(), inner[:, 1].long()] == 0, :]
             outer = sample[image[outer[:, 0].long(), outer[:, 1].long()] == 1, :]
 
         elif (target[sample[0, 0].long() + 1, sample[0, 1].long()] == 0) and (
             target[sample[0, 0].long() - 1, sample[0, 1].long()] == 1
         ):  # low, y large
-            inner = sample + torch.tensor(
-                [-EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device
-            )
-            outer = sample + torch.tensor(
-                [EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device
-            )
+            inner = sample + torch.tensor([-EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device)
+            outer = sample + torch.tensor([EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device)
             inner = sample[image[inner[:, 0].long(), inner[:, 1].long()] == 0, :]
             outer = sample[image[outer[:, 0].long(), outer[:, 1].long()] == 1, :]
 
@@ -305,9 +275,7 @@ class EPEChecker:
             mask[mask >= self._thresh] = 1.0
             mask[mask < self._thresh] = 0.0
             if scale != 1:
-                mask = torch.nn.functional.interpolate(
-                    mask[None, None, :, :], scale_factor=scale, mode="nearest"
-                )[0, 0]
+                mask = torch.nn.functional.interpolate(mask[None, None, :, :], scale_factor=scale, mode="nearest")[0, 0]
             printedNom, printedMax, printedMin = self._litho(mask)
             binaryNom = torch.zeros_like(printedNom)
             binaryNom[printedNom >= self._thresh] = 1
@@ -334,9 +302,7 @@ class ShotCounter:
     def run(self, mask, target=None, scale=1, shape=(512, 512)):
         if not isinstance(mask, torch.Tensor):
             mask = torch.tensor(mask, dtype=REALTYPE, device=self._device)
-        image = torch.nn.functional.interpolate(
-            mask[None, None, :, :], size=shape, mode="nearest"
-        )[0, 0]
+        image = torch.nn.functional.interpolate(mask[None, None, :, :], size=shape, mode="nearest")[0, 0]
         image = image.detach().cpu().numpy().astype(np.uint8)
         comps, labels, stats, centroids = cv2.connectedComponentsWithStats(image)
         rectangles = []
@@ -350,9 +316,7 @@ class ShotCounter:
             x_data = np.unique(np.sort(pixels[:, 0]))
             y_data = np.unique(np.sort(pixels[:, 1]))
             if x_data.shape[0] == 1 or y_data.shape[0] == 1:
-                rectangles.append(
-                    tools.Rectangle(x_data.min(), x_data.max(), y_data.min(), y_data.max())
-                )
+                rectangles.append(tools.Rectangle(x_data.min(), x_data.max(), y_data.min(), y_data.max()))
                 continue
             (rects, sep) = proc.decompose(pixels, 4)
             rectangles.extend(rects)

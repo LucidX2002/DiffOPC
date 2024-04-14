@@ -1,4 +1,4 @@
-Iterations: 80
+Iterations: 65
 TargetDensity: 0.225
 SigmoidSteepness: 4.0
 WeightEPE: 0.5
@@ -21,7 +21,7 @@ DownScale: 1
 # SRAF parameters
 IsInsertSRAF: true
 SRAF_FORBIDDEN: 40
-SRAF_ITERATIONS: 70
+SRAF_ITERATIONS: 65
 SRAF_threshold_min: 0.2
 SRAF_contour_area: 400
 SRAF_min_contour_wh_rule: 40

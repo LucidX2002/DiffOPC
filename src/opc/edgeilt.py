@@ -186,7 +186,6 @@ class EdgeILT(nn.Module):
         edge_params = StraightThroughEstimator.apply(edge_params)
         edge_params = EdgeMerger.apply(edge_params, metadata)
         mask = Binarize.apply(edge_params, metadata, iter_idx)
-        mask.retain_grad()
         printedNom, printedMax, printedMin = self._lithosim(mask)
         return mask, printedNom, printedMax, printedMin, edge_params.detach().clone()
 
@@ -316,8 +315,11 @@ class EdgeILTSolver:
         # OPC loop
         # =========================================================================
         for idx in range(self._config["Iterations"]):
+            begin_epoch = time.time()
+            begin = time.time()
             mask, printedNom, printedMax, printedMin, edge_params_clone = self._edgeILT(edge_params, metadata, idx)
             loss, l2loss, pvband, _, _ = self.cal_loss(target, printedNom, printedMax, printedMin, kernelCurv=kernelCurv)
+            print(f"Forward time: {time.time() - begin}")
 
             if self._config["VISUAL_DEBUG"]:
                 if idx % 40 == 0:
@@ -339,6 +341,7 @@ class EdgeILTSolver:
             opt.step()
             opc_idx = idx
 
+            print(f"end epoch: {time.time() - begin_epoch}")
             if self._config["IsInsertSRAF"]:
                 # if self.trigger_insert_sraf(mask) or idx >= 70:
                 if idx >= self._config["Iterations"] - 1:

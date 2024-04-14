@@ -1,4 +1,4 @@
-Iterations: 5
+Iterations: 60
 TargetDensity: 0.225
 SigmoidSteepness: 4.0
 WeightEPE: 0.5
@@ -27,7 +27,7 @@ SRAF_contour_area: 400
 SRAF_min_contour_wh_rule: 20
 SRAF_initial_sraf_wh: 60
 
-VISUAL_DEBUG: 1
-VERBOSE: 1
+VISUAL_DEBUG: 0
+VERBOSE: 0
 
 Evaluation: 1
