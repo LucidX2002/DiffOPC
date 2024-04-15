@@ -93,12 +93,8 @@ def _kernelMult(kernel, maskFFT, kernelNum):
         output[:, : knxh + 1, : knyh + 1] = (
             maskFFT[:, : knxh + 1, : knyh + 1] * kernel[:kernelNum, -(knxh + 1) :, -(knyh + 1) :]
         )
-        output[:, : knxh + 1, -knyh:] = (
-            maskFFT[:, : knxh + 1, -knyh:] * kernel[:kernelNum, -(knxh + 1) :, :knyh]
-        )
-        output[:, -knxh:, : knyh + 1] = (
-            maskFFT[:, -knxh:, : knyh + 1] * kernel[:kernelNum, :knxh, -(knyh + 1) :]
-        )
+        output[:, : knxh + 1, -knyh:] = maskFFT[:, : knxh + 1, -knyh:] * kernel[:kernelNum, -(knxh + 1) :, :knyh]
+        output[:, -knxh:, : knyh + 1] = maskFFT[:, -knxh:, : knyh + 1] * kernel[:kernelNum, :knxh, -(knyh + 1) :]
         output[:, -knxh:, -knyh:] = maskFFT[:, -knxh:, -knyh:] * kernel[:kernelNum, :knxh, :knyh]
     else:
         maskFFT = torch.unsqueeze(maskFFT, 1)
@@ -108,18 +104,11 @@ def _kernelMult(kernel, maskFFT, kernelNum):
             device=maskFFT.device,
         )
         output[:, :, : knxh + 1, : knyh + 1] = (
-            maskFFT[:, :, : knxh + 1, : knyh + 1]
-            * kernel[None, :kernelNum, -(knxh + 1) :, -(knyh + 1) :]
+            maskFFT[:, :, : knxh + 1, : knyh + 1] * kernel[None, :kernelNum, -(knxh + 1) :, -(knyh + 1) :]
         )
-        output[:, :, : knxh + 1, -knyh:] = (
-            maskFFT[:, :, : knxh + 1, -knyh:] * kernel[None, :kernelNum, -(knxh + 1) :, :knyh]
-        )
-        output[:, :, -knxh:, : knyh + 1] = (
-            maskFFT[:, :, -knxh:, : knyh + 1] * kernel[None, :kernelNum, :knxh, -(knyh + 1) :]
-        )
-        output[:, :, -knxh:, -knyh:] = (
-            maskFFT[:, :, -knxh:, -knyh:] * kernel[None, :kernelNum, :knxh, :knyh]
-        )
+        output[:, :, : knxh + 1, -knyh:] = maskFFT[:, :, : knxh + 1, -knyh:] * kernel[None, :kernelNum, -(knxh + 1) :, :knyh]
+        output[:, :, -knxh:, : knyh + 1] = maskFFT[:, :, -knxh:, : knyh + 1] * kernel[None, :kernelNum, :knxh, -(knyh + 1) :]
+        output[:, :, -knxh:, -knyh:] = maskFFT[:, :, -knxh:, -knyh:] * kernel[None, :kernelNum, :knxh, :knyh]
     return output
 
 
@@ -185,7 +174,8 @@ class _LithoSim(torch.autograd.Function):
             scaleGrad,
             kernelNumGrad,
         )
-        return _convMask(mask, dose, kernel, scale, kernelNum)
+        sim = _convMask(mask, dose, kernel, scale, kernelNum)
+        return sim
 
     @staticmethod
     def backward(ctx, grad):
@@ -219,9 +209,7 @@ class LithoSim(nn.Module):  # Mask -> Aerial -> Printed
         elif isinstance(litho_config, str):
             self._config = yaml2Cfg(config.litho_config)
         elif isinstance(litho_config, DictConfig):
-            self._config = OmegaConf.to_container(
-                litho_config, resolve=True, throw_on_missing=True
-            )
+            self._config = OmegaConf.to_container(litho_config, resolve=True, throw_on_missing=True)
         self._device = device
         required = [
             "KernelDir",
@@ -255,16 +243,10 @@ class LithoSim(nn.Module):  # Mask -> Aerial -> Printed
             "focus": Kernel(self._config["KernelDir"], device=self._device),
             "defocus": Kernel(self._config["KernelDir"], device=self._device, defocus=True),
             "CT focus": Kernel(self._config["KernelDir"], device=self._device, conjuncture=True),
-            "CT defocus": Kernel(
-                self._config["KernelDir"], device=self._device, defocus=True, conjuncture=True
-            ),
+            "CT defocus": Kernel(self._config["KernelDir"], device=self._device, defocus=True, conjuncture=True),
             "combo focus": Kernel(self._config["KernelDir"], device=self._device, combo=True),
-            "combo defocus": Kernel(
-                self._config["KernelDir"], device=self._device, defocus=True, combo=True
-            ),
-            "combo CT focus": Kernel(
-                self._config["KernelDir"], device=self._device, conjuncture=True, combo=True
-            ),
+            "combo defocus": Kernel(self._config["KernelDir"], device=self._device, defocus=True, combo=True),
+            "combo CT focus": Kernel(self._config["KernelDir"], device=self._device, conjuncture=True, combo=True),
             "combo CT defocus": Kernel(
                 self._config["KernelDir"],
                 device=self._device,
@@ -319,15 +301,9 @@ class LithoSim(nn.Module):  # Mask -> Aerial -> Printed
             self._kernels["combo defocus"].scales,
             1,
         )
-        printedNom = torch.sigmoid(
-            self._config["PrintSteepness"] * (aerialNom - self._config["TargetDensity"])
-        )
-        printedMax = torch.sigmoid(
-            self._config["PrintSteepness"] * (aerialMax - self._config["TargetDensity"])
-        )
-        printedMin = torch.sigmoid(
-            self._config["PrintSteepness"] * (aerialMin - self._config["TargetDensity"])
-        )
+        printedNom = torch.sigmoid(self._config["PrintSteepness"] * (aerialNom - self._config["TargetDensity"]))
+        printedMax = torch.sigmoid(self._config["PrintSteepness"] * (aerialMax - self._config["TargetDensity"]))
+        printedMin = torch.sigmoid(self._config["PrintSteepness"] * (aerialMin - self._config["TargetDensity"]))
         return printedNom, printedMax, printedMin
 
 

@@ -81,9 +81,9 @@ class EdgeILTCfg:
         return self._config[key]
 
 
-def get_avg_grad(edge, grad_output):
-    start_point = edge[:, 0].clone().detach().int()
-    end_point = edge[:, 1].clone().detach().int()
+def get_avg_grad_line(edge, grad_output):
+    start_point = edge[:, 0].int()
+    end_point = edge[:, 1].int()
     if start_point[1] == end_point[1]:  # horizontal
         if start_point[0] > end_point[0]:
             start_point, end_point = end_point, start_point
@@ -93,6 +93,21 @@ def get_avg_grad(edge, grad_output):
             start_point, end_point = end_point, start_point
         selected_line = grad_output[start_point[1] : end_point[1] + 1, start_point[0]]
     average_value = selected_line.mean()
+    return average_value
+
+
+def get_avg_grad_points(edge, grad_output):
+    start_point = edge[:, 0].int()
+    end_point = edge[:, 1].int()
+    grad_start = grad_output[start_point[1], start_point[0]]
+    grad_end = grad_output[end_point[1], end_point[0]]
+    average_value = (grad_start + grad_end) / 2
+    return average_value
+
+
+def get_avg_grad(edge, grad_output):
+    mid_point = (edge[:, 0] + edge[:, 1]) / 2
+    average_value = grad_output[mid_point[1].int(), mid_point[0].int()]
     return average_value
 
 
@@ -119,59 +134,52 @@ def save_masks(all_masks, save_dir, case_id):
 class StraightThroughEstimator(torch.autograd.Function):
     @staticmethod
     def forward(ctx, params):
-        # In the forward pass, round the parameters to the nearest integers
         quantized = torch.round(params)
-        # quantized = torch.round(params)
         return quantized
 
     @staticmethod
     def backward(ctx, grad_output):
-        # In the backward pass, directly pass the gradients
         return grad_output
 
 
 class Binarize(torch.autograd.Function):
     @staticmethod
     def forward(ctx, edge_params, metadata, iter_idx):
-        # ctx.seg_params = seg_params
+        # begin = time.time()
         ctx.metadata_param = metadata
         ctx.iter_idx = iter_idx
         binary_mask = edge_params_merge2mask(edge_params, metadata)
-        ctx.save_for_backward(edge_params, binary_mask)
+        ctx.save_for_backward(edge_params)
+        # print(f"Binarize forward time: {time.time() - begin:.2f}s")
         return binary_mask
 
     @staticmethod
     def backward(ctx, grad_output):
-        (edge_params, binary_mask) = ctx.saved_tensors
+        # begin = time.time()
+        (edge_params,) = ctx.saved_tensors
         metadata = ctx.metadata_param
-        # polygon_ids = metadata["polygon_ids"]
-        # direction_vectors = metadata["direction_vectors"]
         velocities = metadata["velocities"]
         average_values = []
-        # idx = ctx.iter_idx
-        # forbidden_mask, _ = edge_params2forbidden(edge_params, metadata)
-        # draw_grad_map(grad_output, binary_mask, forbidden_mask,
-        #             iter_idx=idx, show=False, save=True)
         for edge in edge_params:
             average_value = get_avg_grad(edge, grad_output)
             average_values.append(average_value)
         average_values = torch.stack(average_values)
         average_values = average_values.view(-1, 1, 1)
         grad_edge_params = average_values * velocities
+        # print(f"Binarize backward time: {time.time() - begin:.2f}s")
         return grad_edge_params, None, None
 
 
 class EdgeMerger(torch.autograd.Function):
     @staticmethod
     def forward(ctx, edge_params, metadata):
-        # In the forward pass, merge the edge corners.
+        # begin = time.time()
         edge_params = adjust_corner_edge_params(edge_params, metadata)
-        # quantized = torch.round(params)
+        # print(f"EdgeMerger time: {time.time() - begin:.2f}s")
         return edge_params
 
     @staticmethod
     def backward(ctx, grad_output):
-        # In the backward pass, directly pass the gradients
         return grad_output, None
 
 
@@ -181,13 +189,12 @@ class EdgeILT(nn.Module):
         self._lithosim = lithosim
 
     def forward(self, edge_params, metadata, iter_idx):
-        # if edge_params.grad is not None:
-        # print(f"iter_idx: {iter_idx}: {edge_params.grad.max()}")
         edge_params = StraightThroughEstimator.apply(edge_params)
         edge_params = EdgeMerger.apply(edge_params, metadata)
         mask = Binarize.apply(edge_params, metadata, iter_idx)
+        mask.retain_grad()
         printedNom, printedMax, printedMin = self._lithosim(mask)
-        return mask, printedNom, printedMax, printedMin, edge_params.detach().clone()
+        return mask, printedNom, printedMax, printedMin, edge_params
 
 
 class EdgeILTSolver:
@@ -293,7 +300,6 @@ class EdgeILTSolver:
         else:
             opt = optim.Adam([edge_params], lr=self._config["StepSize"])
 
-        target = target.clone().detach()
         # Optimization process
         lossMin, l2Min, pvbMin = 1e12, 1e12, 1e12
         bestParams = None
@@ -310,16 +316,14 @@ class EdgeILTSolver:
             dtype=REALTYPE,
             device=edge_params.device,
         )
+        # kernelCurv = None
 
         # =========================================================================
         # OPC loop
         # =========================================================================
         for idx in range(self._config["Iterations"]):
-            begin_epoch = time.time()
-            begin = time.time()
             mask, printedNom, printedMax, printedMin, edge_params_clone = self._edgeILT(edge_params, metadata, idx)
             loss, l2loss, pvband, _, _ = self.cal_loss(target, printedNom, printedMax, printedMin, kernelCurv=kernelCurv)
-            print(f"Forward time: {time.time() - begin}")
 
             if self._config["VISUAL_DEBUG"]:
                 if idx % 40 == 0:
@@ -341,7 +345,6 @@ class EdgeILTSolver:
             opt.step()
             opc_idx = idx
 
-            print(f"end epoch: {time.time() - begin_epoch}")
             if self._config["IsInsertSRAF"]:
                 # if self.trigger_insert_sraf(mask) or idx >= 70:
                 if idx >= self._config["Iterations"] - 1:
@@ -395,6 +398,7 @@ class EdgeILTSolver:
             else:
                 save_dir = f"./tmp/{report_dir}/M1_test{case_id}"
             all_masks.append({"mask": bestMask.cpu().numpy(), "iteration": bestMaskIter})
+            print(f"Saving masks to {save_dir}")
             save_masks(all_masks, save_dir, case_id)
 
         return l2Min, pvbMin, bestParams, bestMask, bestMaskIter

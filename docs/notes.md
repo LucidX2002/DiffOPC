@@ -1,16 +1,22 @@
 ## Notes
 
+Apr 14
+
+- [ ] Add exp for non-kernel curv.
+- [ ] Add exp for stepsize
+
+edges -> vertices (must have , but vertices can be smaller)
+
 Apr 12
 
-- [ ] scipy-gpu / opencv-gpu rasterization
+- [x] scipy-gpu / opencv-gpu rasterization
 - [ ] mrc aware
-- \[ \]
 
 Apr 11
 
-- [ ] rasteration has bug.
-- [ ] The downscale didn't make it faster.
-- [ ] Should calculate the baseline earlier.
+- [x] rasteration has bug.
+- [x] The downscale didn't make it faster.
+- [x] Should calculate the baseline earlier.
 
 Apr 10
 

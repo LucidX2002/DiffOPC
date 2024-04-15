@@ -72,7 +72,7 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     log.info("Instantiating loggers...")
     logger: List[Logger] = instantiate_loggers(cfg.get("logger"))
 
-    eval_metrics = ["l2", "pvb", "epe", "shot", "runtime"]
+    eval_metrics = ["l2", "pvb", "epe", "shot", "runtime", "iter"]
 
     metric_dict = {}
 
@@ -89,12 +89,13 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         )
         runtime = time.time() - begin
         if cfg.get("eval"):
-            l2, pvb, epe, shot = evaluation.evaluate(best_mask, target, litho, device=device, scale=1, shots=True)
+            l2, pvb, epe, shot = evaluation.evaluate(best_mask, target, litho, device=device, scale=1, shots=cfg.opc.eval_shot)
             metric_dict["eval_l2"].append(l2)
             metric_dict["eval_pvb"].append(pvb)
             metric_dict["eval_epe"].append(epe)
             metric_dict["eval_shot"].append(shot)
             metric_dict["eval_runtime"].append(runtime)
+            metric_dict["eval_iter"].append(best_mask_iter)
             log.info(
                 f"[Testcase {data_idx}]: L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {shot:.0f}; BestIter: {best_mask_iter} SolveTime: {runtime:.2f}s"
             )

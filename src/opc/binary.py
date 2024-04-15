@@ -422,3 +422,77 @@ def create_binary_mask_from_vertices_bk(vertices, vertices_polygon_ids, width, h
         masks.append(mask)
     mask = torch.stack(masks, dim=0).any(dim=0)
     return mask
+
+
+def create_binary_mask_from_edge_params_full_region(edge_params, polygon_ids, width, height, device=None):
+    if device is None:
+        device = edge_params.device
+
+    unique_ids = torch.unique(polygon_ids)
+
+    # Initialize the binary mask
+    mask = torch.zeros((height, width), dtype=torch.bool, device=device)
+
+    start_points = edge_params[:, :, 0]
+    end_points = edge_params[:, :, 1]
+    all_points = torch.cat((start_points, end_points), dim=0)
+    x_coords = all_points[:, 0]
+    y_coords = all_points[:, 1]
+
+    min_x = torch.min(x_coords)
+    min_y = torch.min(y_coords)
+    max_x = torch.max(x_coords)
+    max_y = torch.max(y_coords)
+
+    x = torch.arange(min_x, max_x + 1, dtype=torch.float32, device=device)
+    y = torch.arange(min_y, max_y + 1, dtype=torch.float32, device=device)
+    grid_y, grid_x = torch.meshgrid(y, x, indexing="ij")
+    points = torch.stack([grid_x, grid_y], dim=-1)
+
+    # mask = torch.zeros((height, width), dtype=torch.bool, device=device)
+    # mask = torch.zeros_like(grid_x, dtype=torch.bool)
+    # Initialize the intersection counter for the current polygon
+    count = torch.zeros_like(grid_x, dtype=torch.int32)
+    # Iterate over each polygon ID
+    v1s = []
+    v2s = []
+
+    for idx in unique_ids:
+        # Get the indices of edges corresponding to the current polygon ID
+        polygon_edge_indices = torch.where(polygon_ids == idx)[0]
+        # Get the edges corresponding to the current polygon ID
+        polygon_edges = edge_params[polygon_edge_indices]
+
+        # Iterate over the edges and add unique vertices to the polygon vertices list
+        num_edges = polygon_edges.shape[0]
+        for idx, edge in enumerate(polygon_edges):
+            start_point = edge[:, 0]
+            end_point = edge[:, 1]
+
+            # vertical edge
+            if not torch.equal(start_point[1], end_point[1]):
+                if idx == num_edges - 1:
+                    # last edge, don't need to check the next edge.
+                    continue
+                else:
+                    next_start_point = polygon_edges[idx + 1, :, 0]
+                    if not torch.equal(end_point, next_start_point):
+                        v1 = end_point - points
+                        v1s.append(v1)
+                        v2 = next_start_point - points
+                        v2s.append(v2)
+                    else:
+                        continue
+            else:
+                v1 = start_point - points
+                v1s.append(v1)
+                v2 = end_point - points
+                v2s.append(v2)
+
+    v1 = torch.stack(v1s, dim=0)
+    v2 = torch.stack(v2s, dim=0)
+    cross = v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]
+    inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | ((v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0))
+    count = torch.sum(inside, dim=0)
+    mask[min_y.int() : max_y.int() + 1, min_x.int() : max_x.int() + 1] |= count % 2 == 1
+    return mask

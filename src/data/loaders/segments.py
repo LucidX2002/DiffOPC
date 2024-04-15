@@ -50,7 +50,7 @@ def segs2metadata(seg_params, start_polygon_id, device):
                 velocity = -velocity
             velocity = torch.stack([velocity, velocity], dim=0)
             velocity = torch.transpose(velocity, 0, 1)
-            velocities.append(velocity.round().detach().clone())
+            velocities.append(velocity.round())
     edge_params = torch.stack(edge_params, dim=0).to(device).requires_grad_(True)
     polygon_ids = torch.cat(polygon_ids, dim=0).to(device)
     direction_vectors = torch.stack(direction_vectors, dim=0).to(device)

@@ -5,7 +5,7 @@ WeightEPE: 0.5
 WeightL2: 1.0
 WeightPVBL2: 0.5
 WeightPVBand: 0.0
-StepSize: 1
+StepSize: 4
 
 OPT: "adam" # 'adam' or 'sgd'
 
@@ -19,15 +19,16 @@ SEG_LENGTH: 60
 DownScale: 1
 
 # SRAF parameters
-IsInsertSRAF: false
+IsInsertSRAF: True
 SRAF_FORBIDDEN: 40
-SRAF_ITERATIONS: 4
+SRAF_ITERATIONS: 60
 SRAF_threshold_min: 0.2
 SRAF_contour_area: 400
 SRAF_min_contour_wh_rule: 20
 SRAF_initial_sraf_wh: 60
-
+# Debug parameters
 VISUAL_DEBUG: 0
 VERBOSE: 0
 
 Evaluation: 1
+eval_shot: False

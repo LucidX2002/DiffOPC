@@ -155,6 +155,7 @@ configs/local/default.yaml
 **.DS_Store
 tmp/
 aim-*
+aim_*
 ./benchmark/baseline/multilevel/rects/*
 
 benchmark/baseline/multilevel/rects

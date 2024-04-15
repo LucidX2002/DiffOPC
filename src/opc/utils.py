@@ -466,7 +466,6 @@ def create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, heig
 
     v1s = []
     v2s = []
-    begin = time.time()
     for idx in unique_ids:
         # Get the vertices corresponding to the current polygon ID
         polygon_vertices = vertices[vertices_polygon_ids == idx]
@@ -475,9 +474,10 @@ def create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, heig
         # polygon_edges = torch.cat([polygon_vertices, polygon_vertices[:1]], dim=0)
         polygon_edges = polygon_vertices
         for i in range(len(polygon_edges) - 1):
-            # Calculate the vectors from each point to the edge endpoints
+            # only check the horizontal line
             if not torch.equal(polygon_edges[i][1], polygon_edges[i + 1][1]):
                 continue
+            # Calculate the vectors from each point to the edge endpoints
             v1 = polygon_edges[i] - points
             v2 = polygon_edges[i + 1] - points
             v1s.append(v1)
@@ -485,8 +485,6 @@ def create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, heig
         # Calculate the cross product of v1 and v2
     v1 = torch.stack(v1s, dim=0)
     v2 = torch.stack(v2s, dim=0)
-    print(f"edge merge time: {time.time() - begin}")
-    begin = time.time()
     cross = v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]
     # Check if the point is inside the polygon
     # inside the polygon and outside polygon, come and go will be different.
@@ -497,72 +495,6 @@ def create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, heig
     count = torch.sum(inside, dim=0)
     # If the count is odd, the point is inside the current polygon
     mask[min_y.int() : max_y.int() + 1, min_x.int() : max_x.int() + 1] |= count % 2 == 1
-    print(f"matrix op: {time.time() - begin}")
-    return mask
-
-
-def create_binary_mask_from_vertices_best(vertices, vertices_polygon_ids, width, height, device=None):
-    """Create a binary mask where points inside any of the polygons are marked as 1 and others as
-    0.
-
-    Args:
-        vertices (torch.Tensor): Vertice tensor of shape [M, 2], where M is the total number of vertices, and 2 represents 2-D coordinates (x, y)
-        vertices_polygon_ids (torch.Tensor): Tensor of shape [M] containing polygon IDs for each vertex
-        width: Width of the plane.
-        height: Height of the plane.
-        device: Device to use for computations (default: None)
-    Returns:
-        A binary mask with shape (height, width), where points inside any of the polygons are marked as 1 and others as 0.
-    """
-    # Determine the device to use
-    if device is None:
-        device = vertices.device
-
-    # Initialize the binary mask
-    mask = torch.zeros((height, width), dtype=torch.bool, device=device)
-
-    # Get the unique polygon IDs
-    unique_ids = torch.unique(vertices_polygon_ids)
-
-    # Iterate over each polygon ID
-    for idx in unique_ids:
-        # Get the vertices corresponding to the current polygon ID
-        polygon_vertices = vertices[vertices_polygon_ids == idx]
-
-        # Determine the bounding box of the current polygon
-        min_x, _ = torch.min(polygon_vertices[:, 0], dim=0)
-        max_x, _ = torch.max(polygon_vertices[:, 0], dim=0)
-        min_y, _ = torch.min(polygon_vertices[:, 1], dim=0)
-        max_y, _ = torch.max(polygon_vertices[:, 1], dim=0)
-
-        # Create a grid representing points within the bounding box of the current polygon
-        x = torch.arange(min_x, max_x + 1, dtype=torch.float32, device=device)
-        y = torch.arange(min_y, max_y + 1, dtype=torch.float32, device=device)
-        grid_y, grid_x = torch.meshgrid(y, x, indexing="ij")
-        points = torch.stack([grid_x, grid_y], dim=-1)
-
-        # Initialize the intersection counter for the current polygon
-        count = torch.zeros_like(grid_x, dtype=torch.int32)
-
-        # Create edges by connecting consecutive vertices and closing the polygon
-        # polygon_edges = torch.cat([polygon_vertices, polygon_vertices[:1]], dim=0)
-        polygon_edges = polygon_vertices
-        # trace_arr = []
-        for i in range(len(polygon_edges) - 1):
-            # Calculate the vectors from each point to the edge endpoints
-            v1 = polygon_edges[i] - points
-            v2 = polygon_edges[i + 1] - points
-
-            # Calculate the cross product of v1 and v2
-            cross = v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]
-            # Check if the point is inside the polygon
-            # inside the polygon and outside polygon, come and go will be different.
-            # we can only check the horizontal (x) line, using y ray.
-            inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | ((v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0))
-            # Increment the count for points inside the polygon or on the edge
-            count += (inside).int()
-        # If the count is odd, the point is inside the current polygon
-        mask[min_y.int() : max_y.int() + 1, min_x.int() : max_x.int() + 1] |= count % 2 == 1
     return mask
 
 
@@ -623,7 +555,6 @@ def edges_to_vertices(edges, polygon_ids):
 
         # Convert the polygon vertices list to a tensor
         polygon_vertices = torch.stack(polygon_vertices)
-
         vertices_list.append(polygon_vertices)
 
         # Create polygon IDs for each vertex
@@ -636,7 +567,7 @@ def edges_to_vertices(edges, polygon_ids):
     return vertices, vertices_polygon_ids
 
 
-def edge_params_merge2mask(edge_params, metadata):
+def edge_params_merge2mask_slow(edge_params, metadata):
     img_shape = metadata["img_shape"]
     polygon_ids = metadata["polygon_ids"]
     vertices, vertices_polygon_ids = edges_to_vertices(edge_params, polygon_ids)
@@ -644,9 +575,86 @@ def edge_params_merge2mask(edge_params, metadata):
     binary_mask = create_binary_mask_from_vertices(vertices, vertices_polygon_ids, width, height)
     binary_mask = binary_mask.float()
     binary_mask.requires_grad_(True)
-    # plt.imshow(binary_mask.cpu().numpy())
-    # plt.show()
     return binary_mask
+
+
+def edge_params_merge2mask(edge_params, metadata):
+    img_shape = metadata["img_shape"]
+    polygon_ids = metadata["polygon_ids"]
+    width, height = img_shape
+    binary_mask = create_binary_mask_from_edge_params(edge_params, polygon_ids, width, height)
+    binary_mask = binary_mask.float()
+    binary_mask.requires_grad_(True)
+    return binary_mask
+
+
+def create_binary_mask_from_edge_params(edge_params, polygon_ids, width, height, device=None):
+    if device is None:
+        device = edge_params.device
+
+    unique_ids = torch.unique(polygon_ids)
+    mask = torch.zeros((height, width), dtype=torch.bool, device=device)
+
+    for idx in unique_ids:
+        # Get the indices of edges corresponding to the current polygon ID
+        polygon_edge_indices = torch.where(polygon_ids == idx)[0]
+        # Get the edges corresponding to the current polygon ID
+        polygon_edges = edge_params[polygon_edge_indices]
+
+        start_points = polygon_edges[:, :, 0]
+        end_points = polygon_edges[:, :, 1]
+        all_points = torch.cat((start_points, end_points), dim=0)
+        # print(all_points)
+        x_coords = all_points[:, 0]
+        y_coords = all_points[:, 1]
+
+        min_x = torch.min(x_coords)
+        min_y = torch.min(y_coords)
+        max_x = torch.max(x_coords)
+        max_y = torch.max(y_coords)
+
+        x = torch.arange(min_x, max_x + 1, dtype=torch.float32, device=device)
+        y = torch.arange(min_y, max_y + 1, dtype=torch.float32, device=device)
+        grid_y, grid_x = torch.meshgrid(y, x, indexing="ij")
+        points = torch.stack([grid_x, grid_y], dim=-1)
+
+        count = torch.zeros_like(grid_x, dtype=torch.int32)
+        # Iterate over each polygon ID
+        v1s = []
+        v2s = []
+        # Iterate over the edges and add unique vertices to the polygon vertices list
+        num_edges = polygon_edges.shape[0]
+        for idx, edge in enumerate(polygon_edges):
+            start_point = edge[:, 0]
+            end_point = edge[:, 1]
+
+            # vertical edge
+            if not torch.equal(start_point[1], end_point[1]):
+                if idx == num_edges - 1:
+                    # last edge, don't need to check the next edge.
+                    continue
+                else:
+                    next_start_point = polygon_edges[idx + 1, :, 0]
+                    if not torch.equal(end_point, next_start_point):
+                        v1 = end_point - points
+                        v1s.append(v1)
+                        v2 = next_start_point - points
+                        v2s.append(v2)
+                    else:
+                        continue
+            else:
+                v1 = start_point - points
+                v1s.append(v1)
+                v2 = end_point - points
+                v2s.append(v2)
+
+        v1 = torch.stack(v1s, dim=0)
+        v2 = torch.stack(v2s, dim=0)
+        cross = v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]
+        inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | ((v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0))
+        count = torch.sum(inside, dim=0)
+        mask[min_y.int() : max_y.int() + 1, min_x.int() : max_x.int() + 1] |= count % 2 == 1
+    return mask
 
 
 def segments_merge2polygon(poly_segments, width, height):
@@ -1091,9 +1099,9 @@ def adjust_corner_edges(edge_params, corner_edges):
     - Adjusted edge parameters as a torch.tensor of the same shape as edge_params.
     """
     # print(corner_edges)
-    # draw_edge_params(edge_params, (2048, 2048), show=True)
     N = edge_params.shape[0]  # Number of edges
-    adjusted_edges = edge_params.clone().detach()
+    # adjusted_edges = edge_params.clone().detach()
+    adjusted_edges = edge_params
 
     # Adjust the last edge with the first edge to ensure they meet at a corner
     adjusted_edges[-1], adjusted_edges[0], _ = find_intersection_and_adjust(edge_params[-1], edge_params[0])
@@ -1147,7 +1155,6 @@ def adjust_edges_by_polygon(edge_params, corner_edges, polygon_ids):
 
 
 def adjust_corner_edge_params(edge_params, metadata):
-    edge_params = edge_params.clone().detach()
     polygon_ids = metadata["polygon_ids"]
     corner_ids = metadata["corner_ids"]
     adjusted_edges = adjust_edges_by_polygon(edge_params, corner_ids, polygon_ids)
