@@ -21,6 +21,7 @@ import src.opc.evaluation as evaluation
 from src.data.datatype import REALTYPE
 from src.data.loaders.segments import segs2metadata
 from src.litho.simple import LithoSim
+from src.opc.evaluation import EPE_CONSTRAINT
 from src.opc.sraf import get_sraf_edges
 from src.opc.utils import (
     adjust_corner_edge_params,
@@ -131,26 +132,6 @@ def save_masks(all_masks, save_dir, case_id):
         )
 
 
-def save_wafers(all_wafers, save_dir, case_id):
-    os.makedirs(save_dir, exist_ok=True)
-    fig, axs = plt.subplots(2, 4, figsize=(20, 12))
-    if len(all_wafers) >= 8:
-        all_wafers = all_wafers[-8:]
-    for i, ax in enumerate(axs.flat):
-        if i < len(all_wafers):
-            ax.imshow(all_wafers[i]["wafer"])
-            ax.set_title(f"Iteration {all_wafers[i]['iteration']}")
-    plt.tight_layout()
-    plt.savefig(f"{str(save_dir)}/EdgeILT_M1_test{case_id}_wafer.png", dpi=300)
-
-    for m in all_wafers:
-        plt.imsave(
-            f"{str(save_dir)}/EdgeILT_test{case_id}_wafer_{m['iteration']}.png",
-            m["wafer"],
-            dpi=300,
-        )
-
-
 class StraightThroughEstimator(torch.autograd.Function):
     @staticmethod
     def forward(ctx, params):
@@ -164,11 +145,11 @@ class StraightThroughEstimator(torch.autograd.Function):
 
 class Binarize(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, edge_params, metadata, iter_idx, sraf_image):
+    def forward(ctx, edge_params, metadata, iter_idx):
         # begin = time.time()
         ctx.metadata_param = metadata
         ctx.iter_idx = iter_idx
-        binary_mask = edge_params_merge2mask(edge_params, metadata, sraf_image)
+        binary_mask = edge_params_merge2mask(edge_params, metadata)
         ctx.save_for_backward(edge_params)
         # print(f"Binarize forward time: {time.time() - begin:.2f}s")
         return binary_mask
@@ -187,7 +168,7 @@ class Binarize(torch.autograd.Function):
         average_values = average_values.view(-1, 1, 1)
         grad_edge_params = average_values * velocities
         # print(f"Binarize backward time: {time.time() - begin:.2f}s")
-        return grad_edge_params, None, None, None
+        return grad_edge_params, None, None
 
 
 class EdgeMerger(torch.autograd.Function):
@@ -208,10 +189,10 @@ class EdgeILT(nn.Module):
         super().__init__()
         self._lithosim = lithosim
 
-    def forward(self, edge_params, metadata, iter_idx, sraf_image):
+    def forward(self, edge_params, metadata, iter_idx):
         edge_params = StraightThroughEstimator.apply(edge_params)
         edge_params = EdgeMerger.apply(edge_params, metadata)
-        mask = Binarize.apply(edge_params, metadata, iter_idx, sraf_image)
+        mask = Binarize.apply(edge_params, metadata, iter_idx)
         mask.retain_grad()
         printedNom, printedMax, printedMin = self._lithosim(mask)
         return mask, printedNom, printedMax, printedMin, edge_params
@@ -239,7 +220,6 @@ class EdgeILTSolver:
         ] = 1
 
         self.grad_queue = [-1e5] * 5
-        self.sraf_image = None
 
     def trigger_insert_sraf(self, mask):
         if mask.grad is not None:
@@ -336,10 +316,9 @@ class EdgeILTSolver:
             epe_loss += D2
         return epe_loss
 
-    def solve(self, target, edge_params, metadata, sraf_image=None, case_id=1, verbose=0):
+    def solve(self, target, edge_params, metadata, case_id=1, verbose=0):
         # Initialize
-        if sraf_image is not None:
-            self.sraf_image = sraf_image
+
         # Optimizer
         if self._config["OPT"] == "sgd":
             opt = optim.SGD([edge_params], lr=self._config["StepSize"])
@@ -352,9 +331,11 @@ class EdgeILTSolver:
         bestMask = None
         bestMaskIter = None
         all_masks = []
-        all_wafers = []
         # all_mask_edges = []
 
+        # debug
+        new_edge_params = None
+        opc_idx = 0
         kernelCurv = torch.tensor(
             [[-1.0 / 16, 5.0 / 16, -1.0 / 16], [5.0 / 16, -1.0, 5.0 / 16], [-1.0 / 16, 5.0 / 16, -1.0 / 16]],
             dtype=REALTYPE,
@@ -366,20 +347,16 @@ class EdgeILTSolver:
         # OPC loop
         # =========================================================================
         for idx in range(self._config["Iterations"]):
-            mask, printedNom, printedMax, printedMin, edge_params_clone = self._edgeILT(edge_params, metadata, idx, sraf_image)
+            mask, printedNom, printedMax, printedMin, edge_params_clone = self._edgeILT(edge_params, metadata, idx)
             loss, l2loss, pvband, _, _ = self.cal_loss(target, printedNom, printedMax, printedMin, kernelCurv=kernelCurv)
             if self._config["EPELoss"]:
                 epe_loss = self.cal_epe_loss(target, printedNom, metadata) * self._config["WeightEPE"]
                 loss += epe_loss
 
             if self._config["VISUAL_DEBUG"]:
-                if idx % 30 == 0:
+                if idx % 40 == 0:
                     mask_cpu = mask.clone().detach().cpu().numpy()
-                    binary_nom = torch.zeros_like(printedNom)
-                    binary_nom[printedNom > 0.5] = 1
-                    binary_nom = binary_nom.cpu().numpy()
                     all_masks.append({"mask": mask_cpu, "iteration": idx})
-                    all_wafers.append({"wafer": binary_nom, "iteration": idx})
 
             if not self._config["IsInsertSRAF"]:
                 if bestParams is None or bestMask is None or loss < lossMin:
@@ -394,20 +371,64 @@ class EdgeILTSolver:
             opt.zero_grad()
             loss.backward()
             opt.step()
+            opc_idx = idx
+
+            if self._config["IsInsertSRAF"]:
+                # if self.trigger_insert_sraf(mask) or idx >= 70:
+                if idx >= self._config["Iterations"] - 1:
+                    if self._config["VISUAL_DEBUG"]:
+                        mask_cpu = mask.clone().detach().cpu().numpy()
+                        all_masks.append({"mask": mask_cpu, "iteration": idx})
+                    # print("Insert SRAF!")
+                    seg_length = self._config["SEG_LENGTH"]
+                    new_edge_params, new_metadata = self.init_sraf_params(mask, edge_params, metadata, seg_length)
+                    opc_idx = idx
+                    # print(f"Insert SRAF at iteration {opc_idx}")
+                    break
+
+        # SRAF loop
+        if self._config["IsInsertSRAF"] and (new_edge_params is not None):
+            new_edge_params = new_edge_params.detach().clone().requires_grad_(True)
+            if self._config["OPT"] == "sgd":
+                opt = optim.SGD([new_edge_params], lr=self._config["StepSize"])
+            else:
+                opt = optim.Adam([new_edge_params], lr=self._config["StepSize"])
+
+            for idx in range(self._config["SRAF_ITERATIONS"]):
+                mask, printedNom, printedMax, printedMin, new_edge_params_clone = self._edgeILT(
+                    new_edge_params, new_metadata, idx
+                )
+                loss, l2loss, pvband, _, _ = self.cal_loss(target, printedNom, printedMax, printedMin, kernelCurv=kernelCurv)
+
+                if self._config["VISUAL_DEBUG"]:
+                    if idx % 20 == 0:
+                        mask_cpu = mask.clone().detach().cpu().numpy()
+                        all_masks.append({"mask": mask_cpu, "iteration": opc_idx + idx})
+
+                if verbose:
+                    print(f"[OPC: {opc_idx}, SRAF Iteration {idx}]: L2 = {l2loss.item():.0f}; PVBand: {pvband.item():.0f}")
+
+                if bestParams is None or bestMask is None or loss < lossMin:
+                    lossMin, l2Min, pvbMin = loss, l2loss, pvband
+                    bestParams = new_edge_params_clone
+                    bestMask = mask.detach().clone()
+                    bestMaskIter = opc_idx + idx
+
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
 
         # Visual Debug
         if self._config["VISUAL_DEBUG"]:
-            report_dir = f"report_{self._config['DownScale']}x"
+            report_dir = "report_sraf" if self._config["IsInsertSRAF"] else "report"
             if self._config["DownScale"] != 1:
                 down_dir = f"down{self._config['DownScale']}x"
                 save_dir = f"./tmp/{report_dir}/{down_dir}/M1_test{case_id}"
             else:
                 save_dir = f"./tmp/{report_dir}/M1_test{case_id}"
-            os.makedirs(save_dir, exist_ok=True)
             all_masks.append({"mask": bestMask.cpu().numpy(), "iteration": bestMaskIter})
             print(f"Saving masks to {save_dir}")
-            save_masks(all_masks, f"{save_dir}/mask", case_id)
-            save_wafers(all_wafers, f"{save_dir}/wafer", case_id)
+            save_masks(all_masks, save_dir, case_id)
 
         return l2Min, pvbMin, bestParams, bestMask, bestMaskIter
 

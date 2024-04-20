@@ -1,16 +1,41 @@
 ## Notes
 
+Apr 20:
+
+- [ ] Baseline results organize.
+- [ ] Exp on larger cases.
+
+Apr 19:
+
+When the resolution is lower than 256, no SRAF will be generated.
+
+- [x] First round gen SRAF candidates.
+- [x] Second round DiffOPC
+- [x] Exp on SRAF min threshold
+- [x] Exp on SRAF initial wh
+- [x] Load SRAF in the binary function
+
+______________________________________________________________________
+
+Apr 18
+
+- [x] EPE loss is not good.
+  - [x] Do more epe loss exp.
+  - [x] Ablation on epe parameters.
+- [x] SRAF generation on low resolution region
+- [x] use pre-generated SRAF to compute.
+
 Apr 14
 
-- [ ] Add exp for non-kernel curv.
-- [ ] Add exp for stepsize
+- [x] Add exp for non-kernel curv.
+- [x] Add exp for stepsize
 
 edges -> vertices (must have , but vertices can be smaller)
 
 Apr 12
 
 - [x] scipy-gpu / opencv-gpu rasterization
-- [ ] mrc aware
+- [x] mrc aware
 
 Apr 11
 
@@ -23,26 +48,26 @@ Apr 10
 Multi-level EdgeILT
 
 - [x] use 512 1024 2048 three levels
-- [ ] when SRAF inseration?
-  - [ ] reduce the SRAF size, once the mid is out of the generation region.
-  - [ ] mask save the binary image and not moving.
-  - [ ] how to remove some small isolated points.
-- [ ] How many round of low-resolution?
-- [ ] How many round of high-resolution?
-- [ ] How to make sure all the edges can be connected with each other?
-- [ ] add curv to reduce the noise points?
-- [ ] Test SGD
+- [x] when SRAF inseration?
+  - [x] reduce the SRAF size, once the mid is out of the generation region.
+  - [x] mask save the binary image and not moving.
+  - [x] how to remove some small isolated points.
+- [x] How many round of low-resolution?
+- [x] How many round of high-resolution?
+- [x] How to make sure all the edges can be connected with each other?
+- [x] add curv to reduce the noise points?
+- [x] Test SGD
 
 baseline
 
-- [ ] Multi-level edge-ILT
-- [ ] STEP resize on the velocity vector.
-- [ ] EPE loss
-- [ ] comparison with previous code
+- [x] Multi-level edge-ILT
+- [x] STEP resize on the velocity vector.
+- [x] EPE loss
+- [x] comparison with previous code
 
 check when to add sraf
 
-- [ ] can add a larger forbidden mask at the beginning.
+- [x] can add a larger forbidden mask at the beginning.
 
 ______________________________________________________________________
 

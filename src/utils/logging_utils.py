@@ -29,6 +29,8 @@ def log_hyperparameters(object_dict: Dict[str, Any]) -> None:
 
     hparams["litho"] = cfg["litho"]
     hparams["opc"] = cfg["opc"]
+    if cfg.get("sraf"):
+        hparams["sraf"] = cfg["sraf"]
     hparams["solver"] = cfg["solver"]
     hparams["data"] = cfg["data"]
     hparams["extras"] = cfg.get("extras")

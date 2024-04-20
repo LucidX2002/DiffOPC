@@ -21,18 +21,20 @@ import src.opc.evaluation as evaluation
 from src.data.datatype import REALTYPE
 from src.data.loaders.segments import segs2metadata
 from src.litho.simple import LithoSim
-from src.opc.sraf import get_sraf_edges
+from src.opc.evaluation import EPE_CONSTRAINT
+from src.opc.sraf import get_sraf_edges, get_sraf_polys
+
+# import pylitho.exact as lithosim
+# draw_edge_params,
+# draw_grad_map,
 from src.opc.utils import (
     adjust_corner_edge_params,
+    draw_grad_map,
     edge_params2forbidden,
     edge_params_merge2mask,
     segment_polygon_edges_with_labels,
 )
 from src.utils.utils import yaml2Cfg
-
-# import pylitho.exact as lithosim
-# draw_edge_params,
-# draw_grad_map,
 
 
 class EdgeILTCfg:
@@ -131,26 +133,6 @@ def save_masks(all_masks, save_dir, case_id):
         )
 
 
-def save_wafers(all_wafers, save_dir, case_id):
-    os.makedirs(save_dir, exist_ok=True)
-    fig, axs = plt.subplots(2, 4, figsize=(20, 12))
-    if len(all_wafers) >= 8:
-        all_wafers = all_wafers[-8:]
-    for i, ax in enumerate(axs.flat):
-        if i < len(all_wafers):
-            ax.imshow(all_wafers[i]["wafer"])
-            ax.set_title(f"Iteration {all_wafers[i]['iteration']}")
-    plt.tight_layout()
-    plt.savefig(f"{str(save_dir)}/EdgeILT_M1_test{case_id}_wafer.png", dpi=300)
-
-    for m in all_wafers:
-        plt.imsave(
-            f"{str(save_dir)}/EdgeILT_test{case_id}_wafer_{m['iteration']}.png",
-            m["wafer"],
-            dpi=300,
-        )
-
-
 class StraightThroughEstimator(torch.autograd.Function):
     @staticmethod
     def forward(ctx, params):
@@ -164,22 +146,25 @@ class StraightThroughEstimator(torch.autograd.Function):
 
 class Binarize(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, edge_params, metadata, iter_idx, sraf_image):
+    def forward(ctx, edge_params, metadata, iter_idx):
         # begin = time.time()
         ctx.metadata_param = metadata
         ctx.iter_idx = iter_idx
-        binary_mask = edge_params_merge2mask(edge_params, metadata, sraf_image)
-        ctx.save_for_backward(edge_params)
+        binary_mask = edge_params_merge2mask(edge_params, metadata)
+        ctx.save_for_backward(edge_params, binary_mask)
         # print(f"Binarize forward time: {time.time() - begin:.2f}s")
         return binary_mask
 
     @staticmethod
     def backward(ctx, grad_output):
         # begin = time.time()
-        (edge_params,) = ctx.saved_tensors
+        (edge_params, binary_mask) = ctx.saved_tensors
+        iter_idx = ctx.iter_idx
         metadata = ctx.metadata_param
         velocities = metadata["velocities"]
         average_values = []
+        # forbidden_mask, _ = edge_params2forbidden(edge_params, metadata)
+        # draw_grad_map(grad_output, binary_mask, forbidden_mask, iter_idx, show=False, save=True)
         for edge in edge_params:
             average_value = get_avg_grad(edge, grad_output)
             average_values.append(average_value)
@@ -187,7 +172,7 @@ class Binarize(torch.autograd.Function):
         average_values = average_values.view(-1, 1, 1)
         grad_edge_params = average_values * velocities
         # print(f"Binarize backward time: {time.time() - begin:.2f}s")
-        return grad_edge_params, None, None, None
+        return grad_edge_params, None, None
 
 
 class EdgeMerger(torch.autograd.Function):
@@ -208,16 +193,16 @@ class EdgeILT(nn.Module):
         super().__init__()
         self._lithosim = lithosim
 
-    def forward(self, edge_params, metadata, iter_idx, sraf_image):
+    def forward(self, edge_params, metadata, iter_idx):
         edge_params = StraightThroughEstimator.apply(edge_params)
         edge_params = EdgeMerger.apply(edge_params, metadata)
-        mask = Binarize.apply(edge_params, metadata, iter_idx, sraf_image)
+        mask = Binarize.apply(edge_params, metadata, iter_idx)
         mask.retain_grad()
         printedNom, printedMax, printedMin = self._lithosim(mask)
         return mask, printedNom, printedMax, printedMin, edge_params
 
 
-class EdgeILTSolver:
+class EdgeILTSrafSolver:
     def __init__(
         self,
         config: EdgeILTCfg,
@@ -238,8 +223,13 @@ class EdgeILTSolver:
             self._config["OffsetY"] : self._config["OffsetY"] + self._config["ILTSizeY"],
         ] = 1
 
+        self._mask_params = []
+        self.case_idx = None
+        # self._mask_grads = []
+        # self._forbidden_masks = []
+        # self._saved_idxs = []
+
         self.grad_queue = [-1e5] * 5
-        self.sraf_image = None
 
     def trigger_insert_sraf(self, mask):
         if mask.grad is not None:
@@ -255,7 +245,75 @@ class EdgeILTSolver:
             else:
                 return False
 
-    def init_sraf_params(self, mask, edge_params, metadata):
+    def save_mask_params(self, mask, edge_params, metadata, idx):
+        sraf_threshold_min = self._config["SRAF_threshold_min"]
+        sraf_threshold_max = 1
+        binary_mask = mask.clone().detach()
+        grad_map_clone = mask.grad.clone().detach()
+        forbidden_mask, _ = edge_params2forbidden(edge_params, metadata)
+        masked_grad_map = torch.zeros_like(grad_map_clone)
+        masked_grad_map[binary_mask < 0.5] = grad_map_clone[binary_mask < 0.5]
+        masked_grad_map[forbidden_mask > 0.5] = 0
+        masked_grad_minus = torch.zeros_like(masked_grad_map)
+        masked_grad_minus[masked_grad_map < 0] = masked_grad_map[masked_grad_map < 0]
+        masked_grad_minus = -masked_grad_minus
+        grad_image = torch.zeros_like(masked_grad_minus)
+        masked_grad_max = masked_grad_minus.max()
+        max_indices = (masked_grad_minus >= (sraf_threshold_min) * masked_grad_max) & (
+            masked_grad_minus <= (sraf_threshold_max) * masked_grad_max
+        )
+        grad_image[max_indices] = 1
+        params = {
+            'mask': mask.clone().detach(),
+            'grad_image': grad_image,
+            'grad_max': masked_grad_max,
+            'idx': idx,
+        }
+        self._mask_params.append(params)
+
+    def get_sraf_image(self, save=False):
+        sorted_mask_params = sorted(self._mask_params, key=lambda x: x['grad_max'])
+        sorted_mask_params = sorted_mask_params[: self._config["max_sraf_grad_candidates"]]
+        x_min = self._config["OffsetX"] - self._config["SEG_LENGTH"] // 2
+        y_min = self._config["OffsetY"] - self._config["SEG_LENGTH"] // 2
+        x_max = self._config["OffsetX"] + self._config["ILTSizeX"] + self._config["SEG_LENGTH"] // 2
+        y_max = self._config["OffsetY"] + self._config["ILTSizeY"] + self._config["SEG_LENGTH"] // 2
+        all_sraf_polys = []
+        # boundaries=(x_min, y_min, x_max, y_max)
+        # print(boundaries)
+        width, height = sorted_mask_params[0]['mask'].shape
+        save_dir = f"./tmp/srafgen_exp_{width}x{height}/test{self.case_idx}"
+        os.makedirs(save_dir, exist_ok=True)
+        for p in sorted_mask_params:
+            if p['grad_max'] > self._config["max_sraf_grad_value"]:
+                continue
+            # print(f"grad_max: {p['grad_max']}, idx: {p['idx']}")
+            p_polys = get_sraf_polys(
+                p['grad_image'],
+                min_contour_area=self._config["SRAF_contour_area"],
+                min_contour_wh_rule=self._config["SRAF_min_contour_wh_rule"],
+                initial_sraf_wh=self._config["SRAF_initial_sraf_wh"],
+                boundaries=(x_min, y_min, x_max, y_max),
+            )
+            all_sraf_polys.extend(p_polys)
+            if save:
+                mask = p['mask']
+                blank_image = torch.zeros_like(p['mask'], dtype=torch.uint8)
+                blank_image[mask > 0.5] = 1
+                blank_image = blank_image.cpu().numpy()
+                for poly in p_polys:
+                    cv2.fillPoly(blank_image, [poly], 1)
+                cv2.imwrite(f"{save_dir}/sraf_image_{p['idx']}.png", blank_image * 255)
+        blank_image = torch.zeros_like(sorted_mask_params[0]['mask'], dtype=torch.uint8)
+        blank_image = blank_image.cpu().numpy()
+        for poly in all_sraf_polys:
+            cv2.fillPoly(blank_image, [poly], 1)
+        if save:
+            cv2.imwrite(f"{save_dir}/sraf_image_all.png", blank_image * 255)
+        sraf_image = torch.from_numpy(blank_image).to(self._device).int()
+        return sraf_image
+
+    def init_sraf_params(self, mask, edge_params, metadata, idx):
         edge_params = edge_params.clone().detach()
         forbidden_mask, _ = edge_params2forbidden(edge_params, metadata)
         sraf_threshold_min = self._config["SRAF_threshold_min"]
@@ -278,13 +336,9 @@ class EdgeILTSolver:
         start_segment_id = edge_params.shape[0] + 1
         sraf_seg_params = segment_polygon_edges_with_labels(sraf_edges, self._config["SEG_LENGTH"], start_segment_id)
 
-        (
-            sraf_edge_params,
-            sraf_polygon_ids,
-            sraf_direction_vectors,
-            sraf_velocities,
-            sraf_corner_ids,
-        ) = segs2metadata(sraf_seg_params, start_polygon_id=start_polygon_id, device=self._device)
+        (sraf_edge_params, sraf_polygon_ids, sraf_direction_vectors, sraf_velocities, sraf_corner_ids, _, _) = segs2metadata(
+            sraf_seg_params, start_polygon_id=start_polygon_id, device=self._device
+        )
         new_edge_params = torch.cat([edge_params, sraf_edge_params], dim=0)
         metadata["polygon_ids"] = torch.cat([metadata["polygon_ids"], sraf_polygon_ids], dim=0)
         metadata["direction_vectors"] = torch.cat([metadata["direction_vectors"], sraf_direction_vectors], dim=0)
@@ -336,10 +390,9 @@ class EdgeILTSolver:
             epe_loss += D2
         return epe_loss
 
-    def solve(self, target, edge_params, metadata, sraf_image=None, case_id=1, verbose=0):
+    def solve(self, target, edge_params, metadata, case_id=1, verbose=0):
         # Initialize
-        if sraf_image is not None:
-            self.sraf_image = sraf_image
+        self.case_idx = case_id
         # Optimizer
         if self._config["OPT"] == "sgd":
             opt = optim.SGD([edge_params], lr=self._config["StepSize"])
@@ -352,9 +405,11 @@ class EdgeILTSolver:
         bestMask = None
         bestMaskIter = None
         all_masks = []
-        all_wafers = []
         # all_mask_edges = []
 
+        # debug
+        new_edge_params = None
+        opc_idx = 0
         kernelCurv = torch.tensor(
             [[-1.0 / 16, 5.0 / 16, -1.0 / 16], [5.0 / 16, -1.0, 5.0 / 16], [-1.0 / 16, 5.0 / 16, -1.0 / 16]],
             dtype=REALTYPE,
@@ -366,20 +421,16 @@ class EdgeILTSolver:
         # OPC loop
         # =========================================================================
         for idx in range(self._config["Iterations"]):
-            mask, printedNom, printedMax, printedMin, edge_params_clone = self._edgeILT(edge_params, metadata, idx, sraf_image)
+            mask, printedNom, printedMax, printedMin, edge_params_clone = self._edgeILT(edge_params, metadata, idx)
             loss, l2loss, pvband, _, _ = self.cal_loss(target, printedNom, printedMax, printedMin, kernelCurv=kernelCurv)
             if self._config["EPELoss"]:
                 epe_loss = self.cal_epe_loss(target, printedNom, metadata) * self._config["WeightEPE"]
                 loss += epe_loss
 
             if self._config["VISUAL_DEBUG"]:
-                if idx % 30 == 0:
+                if idx % 40 == 0:
                     mask_cpu = mask.clone().detach().cpu().numpy()
-                    binary_nom = torch.zeros_like(printedNom)
-                    binary_nom[printedNom > 0.5] = 1
-                    binary_nom = binary_nom.cpu().numpy()
                     all_masks.append({"mask": mask_cpu, "iteration": idx})
-                    all_wafers.append({"wafer": binary_nom, "iteration": idx})
 
             if not self._config["IsInsertSRAF"]:
                 if bestParams is None or bestMask is None or loss < lossMin:
@@ -394,22 +445,35 @@ class EdgeILTSolver:
             opt.zero_grad()
             loss.backward()
             opt.step()
+            opc_idx = idx
+
+            if self._config["VISUAL_DEBUG"]:
+                mask_cpu = mask.clone().detach().cpu().numpy()
+                all_masks.append({"mask": mask_cpu, "iteration": idx})
+
+            # get the last 10 mask gradient for SRAF.
+            if idx >= self._config["Iterations"] - 10:
+                # print("Insert SRAF!")
+                # self.init_sraf_params(mask, edge_params, metadata, idx)
+                self.save_mask_params(mask, edge_params, metadata, idx)
+
+            if idx == self._config["Iterations"] - 1:
+                # self.init_sraf_params(mask, edge_params, metadata, idx)
+                sraf_image = self.get_sraf_image()
 
         # Visual Debug
         if self._config["VISUAL_DEBUG"]:
-            report_dir = f"report_{self._config['DownScale']}x"
+            report_dir = "report_sraf" if self._config["IsInsertSRAF"] else "report"
             if self._config["DownScale"] != 1:
                 down_dir = f"down{self._config['DownScale']}x"
                 save_dir = f"./tmp/{report_dir}/{down_dir}/M1_test{case_id}"
             else:
                 save_dir = f"./tmp/{report_dir}/M1_test{case_id}"
-            os.makedirs(save_dir, exist_ok=True)
             all_masks.append({"mask": bestMask.cpu().numpy(), "iteration": bestMaskIter})
             print(f"Saving masks to {save_dir}")
-            save_masks(all_masks, f"{save_dir}/mask", case_id)
-            save_wafers(all_wafers, f"{save_dir}/wafer", case_id)
+            save_masks(all_masks, save_dir, case_id)
 
-        return l2Min, pvbMin, bestParams, bestMask, bestMaskIter
+        return l2Min, pvbMin, bestParams, bestMask, bestMaskIter, sraf_image
 
 
 def serial():
@@ -430,7 +494,7 @@ def serial():
 
     lithoCfg = OmegaConf.load("./configs/litho/default.yaml")
     litho = LithoSim(lithoCfg.litho_config, device)
-    solver = EdgeILTSolver(cfg, litho, device)
+    solver = EdgeILTSrafSolver(cfg, litho, device)
     for idx in range(1, 11):
         design = glp_seg.Design(f"./benchmark/ICCAD2013/M1_test{idx}.glp", down=SCALE)
         # design = glp_seg.Design(f"./benchmark/edge_bench/edge_test{idx}.glp", down=SCALE)
@@ -450,7 +514,6 @@ def serial():
             edge_params,
             metadata,
             case_id=idx,
-            curv=None,
             verbose=cfg["VERBOSE"],
         )
         runtime = time.time() - begin

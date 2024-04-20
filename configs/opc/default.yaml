@@ -1,31 +1,23 @@
-Iterations: 65
+Iterations: 70
 TargetDensity: 0.225
 SigmoidSteepness: 4.0
-WeightEPE: 0.5
+EPELoss: False
+WeightEPE: 100
 WeightL2: 1.0
 WeightPVBL2: 0.9
 WeightPVBand: 0.0
-StepSize: 1
-
 OPT: "adam" # 'adam' or 'sgd'
+
+StepSize: 4
 
 TileSizeX: 2048
 TileSizeY: 2048
-OffsetX: 512
-OffsetY: 512
-ILTSizeX: 1024
-ILTSizeY: 1024
+OffsetX: 384
+OffsetY: 384
+ILTSizeX: 1280
+ILTSizeY: 1280
 SEG_LENGTH: 60
 DownScale: 1
-
-# SRAF parameters
-IsInsertSRAF: true
-SRAF_FORBIDDEN: 40
-SRAF_ITERATIONS: 65
-SRAF_threshold_min: 0.2
-SRAF_contour_area: 400
-SRAF_min_contour_wh_rule: 40
-SRAF_initial_sraf_wh: 60
 
 # Debug parameters
 VISUAL_DEBUG: 0

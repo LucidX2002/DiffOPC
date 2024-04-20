@@ -35,6 +35,8 @@ def segs2metadata(seg_params, start_polygon_id, device):
     direction_vectors = []
     velocities = []
     corner_ids = []
+    epe_points = []
+    seg_types = []
     for idx, poly in enumerate(seg_params):
         polygon_ids.append(torch.full((len(poly),), idx + start_polygon_id, dtype=torch.int32))
         is_clockwise = True if poly[0]["direction"][0] == 1 else False
@@ -51,12 +53,15 @@ def segs2metadata(seg_params, start_polygon_id, device):
             velocity = torch.stack([velocity, velocity], dim=0)
             velocity = torch.transpose(velocity, 0, 1)
             velocities.append(velocity.round())
+            epe_points.append(seg["epe_point"].detach().clone())
+            seg_types.append(seg["type"])
     edge_params = torch.stack(edge_params, dim=0).to(device).requires_grad_(True)
     polygon_ids = torch.cat(polygon_ids, dim=0).to(device)
     direction_vectors = torch.stack(direction_vectors, dim=0).to(device)
     velocities = torch.stack(velocities, dim=0).to(device)
     corner_ids = torch.tensor(corner_ids, dtype=torch.int32, device=device)
-    return edge_params, polygon_ids, direction_vectors, velocities, corner_ids
+    epe_points = torch.stack(epe_points, dim=0).to(device)
+    return edge_params, polygon_ids, direction_vectors, velocities, corner_ids, epe_points, seg_types
 
 
 class SegmentsInitTorch(Initializer):
@@ -83,7 +88,7 @@ class SegmentsInitTorch(Initializer):
         target_edges = design.polygon_edges
         seg_params = segment_polygon_edges_with_labels(target_edges, seg_length, start_segment_id=start_segment_id)
 
-        edge_params, polygon_ids, direction_vectors, velocities, corner_ids = segs2metadata(
+        edge_params, polygon_ids, direction_vectors, velocities, corner_ids, epe_points, seg_types = segs2metadata(
             seg_params, start_polygon_id=start_polygon_id, device=self.device
         )
         shape = (sizeX, sizeY)
@@ -97,10 +102,13 @@ class SegmentsInitTorch(Initializer):
             "velocities": velocities,
             "corner_ids": corner_ids,
             "sraf_forbidden": sraf_forbidden,
+            "epe_points": epe_points,
+            "seg_types": seg_types,
         }
-        # print(edge_params[0:5])
-        # print(direction_vectors[0:20])
-        # print(velocities[0:20])
+        # print(edge_params[0:20])
+        # print(epe_points[0:20])
+        # print(direction_vectors[0:5])
+        # print(velocities[0:5])
         # print(corner_ids[0:5])
         return target, edge_params, metadata
 

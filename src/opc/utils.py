@@ -339,6 +339,18 @@ def segment_polygon_edges_with_labels(polygon_edges, seg_length, start_segment_i
         return segments, segment_id
 
     def create_segment(start_point, end_point, seg_type_label, segment_id, is_start, is_end, direction):
+        # mid_point = (start_point + end_point) / 2
+        # if is_start or is_end:
+        #     mid_point = torch.tensor([-1, -1], dtype=REALTYPE, device=start_point.device)
+        # else:
+        if seg_type_label == "H":
+            mid_point = torch.tensor(
+                [(start_point[0] + end_point[0]) // 2, end_point[1]], dtype=REALTYPE, device=start_point.device
+            )
+        else:
+            mid_point = torch.tensor(
+                [end_point[0], (start_point[1] + end_point[1]) // 2], dtype=REALTYPE, device=start_point.device
+            )
         return [
             {
                 "segment": torch.stack([start_point, end_point], dim=1).requires_grad_(),
@@ -348,6 +360,7 @@ def segment_polygon_edges_with_labels(polygon_edges, seg_length, start_segment_i
                 "end": is_end,
                 "next": None if is_end else segment_id + 1,
                 "direction": direction,
+                "epe_point": mid_point,
             }
         ]
 
@@ -578,19 +591,21 @@ def edge_params_merge2mask_slow(edge_params, metadata):
     return binary_mask
 
 
-def edge_params_merge2mask(edge_params, metadata):
+def edge_params_merge2mask(edge_params, metadata, sraf_image=None):
     img_shape = metadata["img_shape"]
     polygon_ids = metadata["polygon_ids"]
     width, height = img_shape
-    binary_mask = create_binary_mask_from_edge_params(edge_params, polygon_ids, width, height)
+    binary_mask = create_binary_mask_from_edge_params(edge_params, polygon_ids, width, height, sraf_image)
     binary_mask = binary_mask.float()
     binary_mask.requires_grad_(True)
     return binary_mask
 
 
-def create_binary_mask_from_edge_params(edge_params, polygon_ids, width, height, device=None):
+def create_binary_mask_from_edge_params(edge_params, polygon_ids, width, height, sraf_image, device=None):
     if device is None:
         device = edge_params.device
+    if sraf_image is None:
+        sraf_image = torch.zeros((height, width), dtype=torch.int32, device=device)
 
     unique_ids = torch.unique(polygon_ids)
     mask = torch.zeros((height, width), dtype=torch.bool, device=device)
@@ -654,6 +669,7 @@ def create_binary_mask_from_edge_params(edge_params, polygon_ids, width, height,
         inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | ((v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0))
         count = torch.sum(inside, dim=0)
         mask[min_y.int() : max_y.int() + 1, min_x.int() : max_x.int() + 1] |= count % 2 == 1
+    mask[sraf_image > 0.5] = 1
     return mask
 
 
@@ -1023,7 +1039,7 @@ class ShotCounter:
         return len(rectangles)
 
 
-def find_intersection_and_adjust(line1, line2):
+def find_intersection_and_adjust(line1, line2, is_line1_vertical=True):
     """Adjusts two perpendicular line segments (one vertical and one horizontal) to meet exactly at
     their intersection point, ensuring that the start of the second line is the intersection point.
     Returns the adjusted line segments and the coordinates of the intersection point.
@@ -1041,7 +1057,7 @@ def find_intersection_and_adjust(line1, line2):
     # Determine which line is vertical and which is horizontal
     line1 = line1.clone().detach()
     line2 = line2.clone().detach()
-    is_line1_vertical = line1[0, 0] == line1[0, 1]
+    # is_line1_vertical = line1[0, 0] == line1[0, 1]
 
     # Extract vertical and horizontal lines
     vertical_line = line1 if is_line1_vertical else line2
@@ -1079,12 +1095,14 @@ def find_intersection_and_adjust(line1, line2):
     # print(new_line1, '\n',  new_line2, '\n', intersection_point, '\n')
     # print('line1', line1, '\n', 'line2', line2)
     # print(new_line1, '\n', new_line2, '\n', intersection_point)
+    # print(f"new_line1: {new_line1}, \n new_line2: {new_line2}, \n intersection_point: {intersection_point} \n \n")
+    # print("*" * 50)
     assert torch.equal(new_line1[:, 1], new_line2[:, 0])
     assert torch.equal(intersection_point, new_line1[:, 1])
     return new_line1, new_line2, intersection_point
 
 
-def adjust_corner_edges(edge_params, corner_edges):
+def adjust_corner_edges(edge_params, corner_edges, direction_vectors):
     """Adjusts the corner edges of a polygon represented by edge_params. The function assumes the
     last edge and the first edge form a corner, and any other specified corner edges are adjacent.
     The corner edges are specified by the corner_edges tensor.
@@ -1098,20 +1116,33 @@ def adjust_corner_edges(edge_params, corner_edges):
     Returns:
     - Adjusted edge parameters as a torch.tensor of the same shape as edge_params.
     """
+
+    def is_line1_vertical(line1_idx):
+        direction = direction_vectors[line1_idx]
+        if direction[0] == 0:
+            return True
+        else:
+            return False
+
     # print(corner_edges)
     N = edge_params.shape[0]  # Number of edges
     # adjusted_edges = edge_params.clone().detach()
     adjusted_edges = edge_params
+    # print(f"direc: {direction_vectors}")
 
     # Adjust the last edge with the first edge to ensure they meet at a corner
-    adjusted_edges[-1], adjusted_edges[0], _ = find_intersection_and_adjust(edge_params[-1], edge_params[0])
+    adjusted_edges[-1], adjusted_edges[0], _ = find_intersection_and_adjust(
+        edge_params[-1], edge_params[0], is_line1_vertical(-1)
+    )
 
     # Adjust other specified corner edges
     i = 1
     while i < N - 1:
         if corner_edges[i]:
             # Adjust this corner edge with the next edge
-            adjusted_edges[i], adjusted_edges[i + 1], _ = find_intersection_and_adjust(edge_params[i], edge_params[i + 1])
+            adjusted_edges[i], adjusted_edges[i + 1], _ = find_intersection_and_adjust(
+                edge_params[i], edge_params[i + 1], is_line1_vertical(i)
+            )
             i += 2
         else:
             i += 1
@@ -1119,7 +1150,7 @@ def adjust_corner_edges(edge_params, corner_edges):
     return adjusted_edges
 
 
-def adjust_edges_by_polygon(edge_params, corner_edges, polygon_ids):
+def adjust_edges_by_polygon(edge_params, corner_edges, polygon_ids, direction_vectors):
     """Adjusts the corner edges for multiple polygons. Each edge belongs to a polygon, and this
     function processes each polygon separately.
 
@@ -1140,13 +1171,14 @@ def adjust_edges_by_polygon(edge_params, corner_edges, polygon_ids):
         poly_mask = (polygon_ids == poly_id).squeeze()
         poly_edges = edge_params[poly_mask]
         poly_corners = corner_edges[poly_mask]
+        poly_directions = direction_vectors[poly_mask]
 
         # Adjust edges for this polygon
         # NOTE: Insert the logic here for adjusting edges within a single polygon,
         # using the function you have for adjusting corner edges. This is a placeholder
         # and should be replaced with the actual logic you intend to use.
         # print(f"polygon {poly_id}")
-        adjusted_poly_edges = adjust_corner_edges(poly_edges, poly_corners)  # This needs to be defined.
+        adjusted_poly_edges = adjust_corner_edges(poly_edges, poly_corners, poly_directions)  # This needs to be defined.
 
         # Update the adjusted edges back into the main tensor
         adjusted_edges[poly_mask] = adjusted_poly_edges
@@ -1157,7 +1189,8 @@ def adjust_edges_by_polygon(edge_params, corner_edges, polygon_ids):
 def adjust_corner_edge_params(edge_params, metadata):
     polygon_ids = metadata["polygon_ids"]
     corner_ids = metadata["corner_ids"]
-    adjusted_edges = adjust_edges_by_polygon(edge_params, corner_ids, polygon_ids)
+    direction_vectors = metadata["direction_vectors"]
+    adjusted_edges = adjust_edges_by_polygon(edge_params, corner_ids, polygon_ids, direction_vectors)
     return adjusted_edges
 
 
@@ -1218,7 +1251,7 @@ def draw_grad_map(grad_map, binary_mask, forbidden_mask, iter_idx=0, show=True, 
         plt.show()
     if save:
         if iter_idx == 0:
-            os.makedirs("./tmp/grad", exist_ok=True)
+            os.makedirs(f"./tmp/grad_{width}x{height}", exist_ok=True)
         if iter_idx >= 0:
             print(f"iter_idx: {iter_idx}")
             # plt.imsave(f"./tmp/grad/masked_grad_map_{iter_idx}.png", masked_grad_map.cpu().numpy())
@@ -1227,15 +1260,15 @@ def draw_grad_map(grad_map, binary_mask, forbidden_mask, iter_idx=0, show=True, 
             # plt.imsave(f"./tmp/grad/masked_grad_min_max_{iter_idx}.png", masked_grad_min_max.cpu().numpy())
             # plt.close()
             # plt.imsave(f"./tmp/grad/forbidden_mask_{iter_idx}.png", forbidden_mask.cpu().numpy(), cmap='gray')
-            if iter_idx >= 40:
-                torch.save(masked_grad_minus, f"./tmp/grad/masked_grad_minus_{iter_idx}.pt")
+            # if iter_idx >= 40:
+            torch.save(masked_grad_minus, f"./tmp/grad_{width}x{height}/masked_grad_minus_{iter_idx}.pt")
             Z = -masked_grad_minus.cpu().numpy()
             # Z = np.flip(Z, axis=0)
             Z = np.rot90(Z, 3)
             contours = plt.contourf(X.cpu().numpy(), Y.cpu().numpy(), Z)
             plt.colorbar(contours)
             plt.tight_layout()
-            plt.savefig(f"./tmp/grad/masked_grad_minus_{iter_idx}.png")
+            plt.savefig(f"./tmp/grad_{width}x{height}/masked_grad_minus_{iter_idx}.png")
             plt.close()
 
 
@@ -1264,6 +1297,7 @@ def edge_params2forbidden(edge_params, metadata):
     edge_params = edge_params.clone().detach()
     velocities = metadata["velocities"]
     sraf_forbidden_range = metadata["sraf_forbidden"]
+    # print(sraf_forbidden_range)
     quantized_edge_params = torch.round(edge_params)
     forbidden_edge_params = quantized_edge_params + velocities * sraf_forbidden_range
     forbidden_edge_params = adjust_corner_edge_params(forbidden_edge_params, metadata)

@@ -31,6 +31,7 @@ from torch.utils.data import Dataset
 import src.opc.evaluation as evaluation
 from src.litho.simple import LithoSim
 from src.opc.edgeilt import EdgeILTCfg, EdgeILTSolver
+from src.opc.sraf_cdt import EdgeILTSrafSolver
 from src.utils import (
     RankedLogger,
     extras,
@@ -61,11 +62,11 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     log.info(f"Instantiating litho module <{cfg.litho._target_}>")
     litho: LithoSim = hydra.utils.instantiate(cfg.litho, device=device)
 
-    log.info("Instantiating multi-scale OPC model")
-    model_low: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc.low), litho, device)
-    model_mid: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc.mid), litho, device)
-    model_high: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc.high), litho, device)
-    opc_models = {"low": model_low, "mid": model_mid, "high": model_high}
+    sraf_resolution = cfg.solver.sraf_resolution
+    opc_resolution = cfg.solver.opc_resolution
+    log.info(f"Instantiating multi-scale OPC model: SRAF: {sraf_resolution}, OPC: {opc_resolution}")
+    opc_model: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc[opc_resolution]), litho, device)
+    sraf_model: EdgeILTSrafSolver = EdgeILTSrafSolver(EdgeILTCfg(cfg.sraf[sraf_resolution]), litho, device)
 
     log.info(f"Instantiating dataset <{cfg.data._target_}>")
     dataset: Dataset = hydra.utils.instantiate(cfg.data, device=device)
@@ -83,20 +84,32 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     for m in eval_metrics:
         metric_dict["eval_" + m] = []
 
-    # for _, data in enumerate(data_loader):
-    resolution = cfg.opc.common.resolution
     for i in range(len(dataset)):
         data = dataset[i]
-        target, edge_params, metadata, data_idx = data[resolution]
+        target, edge_params, metadata, data_idx = data[sraf_resolution]
         target_ref = data['high'][0]
         begin = time.time()
-        _, _, _, best_mask, best_mask_iter = opc_models[resolution].solve(
-            target, edge_params, metadata, case_id=data_idx, verbose=cfg.opc[resolution]["VERBOSE"]
+        _, _, _, _, _, sraf_image = sraf_model.solve(
+            target, edge_params, metadata, case_id=data_idx, verbose=cfg.sraf[sraf_resolution]["VERBOSE"]
+        )
+        sraf_runtime = time.time() - begin
+        sraf_downscale = cfg.sraf[sraf_resolution]["DownScale"]
+        opc_downscale = cfg.opc[opc_resolution]["DownScale"]
+        rel_downscale = sraf_downscale / opc_downscale
+        if rel_downscale != 1:
+            sraf_image = torch.nn.functional.interpolate(
+                sraf_image[None, None, :, :].float(), scale_factor=rel_downscale, mode='nearest'
+            )[0, 0].int()
+
+        target, edge_params, metadata, data_idx = data[opc_resolution]
+        begin = time.time()
+        _, _, _, best_mask, best_mask_iter = opc_model.solve(
+            target, edge_params, metadata, sraf_image=sraf_image, case_id=data_idx, verbose=cfg.opc[opc_resolution]["VERBOSE"]
         )
         runtime = time.time() - begin
         if cfg.get("eval"):
             l2, pvb, epe, shot = evaluation.evaluate(
-                best_mask, target_ref, litho, device=device, scale=cfg.opc[resolution]["DownScale"], shots=True
+                best_mask, target_ref, litho, device=device, scale=cfg.opc[opc_resolution]["DownScale"], shots=True
             )
             metric_dict["eval_l2"].append(l2)
             metric_dict["eval_pvb"].append(pvb)
@@ -106,7 +119,6 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             log.info(
                 f"[Testcase {data_idx}]: L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {shot:.0f}; BestIter: {best_mask_iter} SolveTime: {runtime:.2f}s"
             )
-
     object_dict = {
         "cfg": cfg,
         "logger": logger,
@@ -127,7 +139,7 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     return metric_dict, object_dict
 
 
-@hydra.main(version_base="1.3", config_path="../configs", config_name="multidiff.yaml")
+@hydra.main(version_base="1.3", config_path="../configs", config_name="sraf_diffopc.yaml")
 def main(cfg: DictConfig) -> Optional[float]:
     """Main entry point for DiffOPC.
 

@@ -85,7 +85,7 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         target, edge_params, metadata, data_idx = data
         begin = time.time()
         _, _, _, best_mask, best_mask_iter = opc_model.solve(
-            target, edge_params, metadata, case_id=data_idx, curv=None, verbose=cfg.opc.VERBOSE
+            target, edge_params, metadata, case_id=data_idx, verbose=cfg.opc.VERBOSE
         )
         runtime = time.time() - begin
         if cfg.get("eval"):

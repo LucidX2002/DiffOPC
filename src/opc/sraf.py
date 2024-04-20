@@ -1,5 +1,6 @@
 from collections import deque
 
+import numpy as np
 import torch
 
 
@@ -199,6 +200,49 @@ def check_sraf_in_boundaries(c_x, c_y, boundaries):
     if c_y < y_min or c_y > y_max:
         return False
     return True
+
+
+def get_sraf_polys(
+    grad_image,
+    min_contour_area=400,
+    min_contour_wh_rule=20,
+    initial_sraf_wh=60,
+    boundaries=None,
+):
+    sraf_contours = marching_squares(grad_image)
+    sraf_polys = []
+    for contour in sraf_contours:
+        area = contour_area(contour)
+        if area > min_contour_area:
+            contour_cartesian_coords = contour[:, [1, 0]]
+            min_x = contour_cartesian_coords[:, 0].min().item()
+            min_y = contour_cartesian_coords[:, 1].min().item()
+            max_x = contour_cartesian_coords[:, 0].max().item()
+            max_y = contour_cartesian_coords[:, 1].max().item()
+            width = max_x - min_x
+            height = max_y - min_y
+            min_contour_wh = min(width, height)
+
+            if min_contour_wh < min_contour_wh_rule:
+                continue
+            else:
+                hw_ratio = height / width
+                c_x, c_y = find_centroid(contour_cartesian_coords)
+                if not check_sraf_in_boundaries(c_x, c_y, boundaries):
+                    continue
+                min_wh = initial_sraf_wh
+                if width < min_wh or height < min_wh:
+                    min_wh = min(width, height)
+                if hw_ratio > 1:
+                    sraf_w = min_wh
+                    sraf_h = min_wh * hw_ratio
+                else:
+                    sraf_h = min_wh
+                    sraf_w = min_wh / hw_ratio
+                p_sraf = rectangle_to_polygon(c_x, c_y, sraf_w, sraf_h)
+                p_sraf = np.array(p_sraf, dtype=np.int32)
+                sraf_polys.append(p_sraf)
+    return sraf_polys
 
 
 def get_sraf_edges(

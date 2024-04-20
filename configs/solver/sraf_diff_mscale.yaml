@@ -1,0 +1,5 @@
+sraf_resolution: low
+opc_resolution: high
+
+accelerator: gpu
+device_id: 0

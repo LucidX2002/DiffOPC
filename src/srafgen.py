@@ -30,7 +30,8 @@ from torch.utils.data import Dataset
 
 import src.opc.evaluation as evaluation
 from src.litho.simple import LithoSim
-from src.opc.edgeilt import EdgeILTCfg, EdgeILTSolver
+from src.opc.sraf_cdt import EdgeILTCfg
+from src.opc.sraf_cdt import EdgeILTSrafSolver as EdgeILTSolver
 from src.utils import (
     RankedLogger,
     extras,
@@ -62,10 +63,11 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     litho: LithoSim = hydra.utils.instantiate(cfg.litho, device=device)
 
     log.info("Instantiating multi-scale OPC model")
+    model_mini: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc.mini), litho, device)
     model_low: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc.low), litho, device)
     model_mid: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc.mid), litho, device)
     model_high: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc.high), litho, device)
-    opc_models = {"low": model_low, "mid": model_mid, "high": model_high}
+    opc_models = {"mini": model_mini, "low": model_low, "mid": model_mid, "high": model_high}
 
     log.info(f"Instantiating dataset <{cfg.data._target_}>")
     dataset: Dataset = hydra.utils.instantiate(cfg.data, device=device)
@@ -90,7 +92,7 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         target, edge_params, metadata, data_idx = data[resolution]
         target_ref = data['high'][0]
         begin = time.time()
-        _, _, _, best_mask, best_mask_iter = opc_models[resolution].solve(
+        _, _, _, best_mask, best_mask_iter, sraf_image = opc_models[resolution].solve(
             target, edge_params, metadata, case_id=data_idx, verbose=cfg.opc[resolution]["VERBOSE"]
         )
         runtime = time.time() - begin
@@ -127,7 +129,7 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     return metric_dict, object_dict
 
 
-@hydra.main(version_base="1.3", config_path="../configs", config_name="multidiff.yaml")
+@hydra.main(version_base="1.3", config_path="../configs", config_name="srafgen.yaml")
 def main(cfg: DictConfig) -> Optional[float]:
     """Main entry point for DiffOPC.
 

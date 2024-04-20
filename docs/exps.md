@@ -1,5 +1,35 @@
 # Best params
 
+Conclusion:
+
+**StepSize == 4 is the best.**
+**max_iter == 60**
+Overall, the exp can be very fast if no sraf edges.
+We can insert sraf before the exp. using the 256 size.
+
+when do sraf, the step size can be slower.
+
+______________________________________________________________________
+
+steps=(1 2 4 8)
+iters=(60 70 80 90)
+opc.SEG_LENGTH=60 80 100
+
+run.experiment == 'iter_seg60'  & 'iter_seg60_sraf"
+
+best opc iter = 80 , best step size = 4
+
+min epe = 3.2
+min l2 = 30119
+min pvb = 51924
+min shot = 76
+min iter
+
+run.experiment == 'iter_seg100"
+min runtime = 4.87s
+
+______________________________________________________________________
+
 aim_0410_pvb_weight
 
 WeightPVBL2=0.9

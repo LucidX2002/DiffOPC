@@ -18,6 +18,7 @@ def print_config_tree(
     print_order: Sequence[str] = (
         "litho",
         "opc",
+        "sraf",
         "solver",
         "data",
         "model",

@@ -1,7 +1,8 @@
-Iterations: 60
+Iterations: 70
 TargetDensity: 0.225
 SigmoidSteepness: 4.0
-WeightEPE: 0.5
+EPELoss: True
+WeightEPE: 100
 WeightL2: 1.0
 WeightPVBL2: 0.5
 WeightPVBand: 0.0
@@ -19,7 +20,7 @@ SEG_LENGTH: 60
 DownScale: 1
 
 # SRAF parameters
-IsInsertSRAF: True
+IsInsertSRAF: False
 SRAF_FORBIDDEN: 40
 SRAF_ITERATIONS: 60
 SRAF_threshold_min: 0.2
