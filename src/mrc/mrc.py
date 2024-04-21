@@ -2,9 +2,11 @@ import pickle
 from pathlib import Path
 
 import cv2
+import hydra
 import numpy as np
 import rootutils
 import torch
+from aim import Run
 from matplotlib import pyplot as plt
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image, ImageDraw
@@ -106,46 +108,52 @@ def rects2image(rects, shape=(512, 512), min_area=400, min_wh=20):
     return image
 
 
-def save_rects(resize_shape=(512, 512)):
-    mask_dir = "./benchmark/baseline/multilevel/mask"
+def save_rects(mask_dir, resize_shape=(2048, 2048)):
     for i in range(1, 11):
         m_name = f"MultiLevel_mask{i}.png"
         m_path = f"{mask_dir}/{m_name}"
-        print(f"Processing {m_path}")
-        rects = image2rects(m_path, resize_shape=resize_shape)
+        # print(f"Processing {m_path}")
         out_dir = Path(mask_dir).parent / "rects" / f"{resize_shape[0]}x{resize_shape[1]}"
         out_dir.mkdir(parents=True, exist_ok=True)
         o_name = f"{m_name.split('.')[0]}.pkl"
         o_path = out_dir / o_name
-        with open(o_path, "wb") as f:
-            pickle.dump(rects, f)
+        if not o_path.exists():
+            rects = image2rects(m_path, resize_shape=resize_shape)
+            with open(o_path, "wb") as f:
+                pickle.dump(rects, f)
+        else:
+            print(f"{o_path} already exists, pass")
 
 
-def save_images(rect_shape=(512, 512), min_area=400, min_wh=20):
+def save_images(rects_dir, rect_shape=(2048, 2048), min_area=400, min_wh=20):
     shape = rect_shape
-    rects_dir = f"./benchmark/baseline/multilevel/rects/{shape[0]}x{shape[1]}"
     for i in range(1, 11):
         m_name = f"MultiLevel_mask{i}.pkl"
         m_path = f"{rects_dir}/{m_name}"
-        print(f"Processing {m_path}")
+        # print(f"Processing {m_path}")
+        out_dir = Path(rects_dir).parent / f"{shape[0]}x{shape[1]}_filtered" / f"area_{min_area}_wh_{min_wh}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = f"{str(out_dir)}/{m_name.split('.')[0]}.png"
+        if Path(out_path).exists():
+            print(f"{out_path} already exists, pass")
+            continue
         rects = pickle.load(open(m_path, "rb"))
         image = rects2image(rects, shape, min_area, min_wh)
         # image = np.rot90(image, 2)
         image = image.rotate(180)
         image = image.transpose(Image.FLIP_LEFT_RIGHT)
-        out_dir = Path(rects_dir).parent / f"{shape[0]}x{shape[1]}_filtered" / f"area_{min_area}_wh_{min_wh}"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        image.save(f"{str(out_dir)}/{m_name.split('.')[0]}.png")
+        image.save(out_path)
         print(f"save to {str(out_dir)}/{m_name.split('.')[0]}.png")
 
 
-def eval_filtered(mask_dir, target_dir):
+def eval_filtered(mask_dir, target_dir, run):
     lithoCfg = OmegaConf.load("./configs/litho/default.yaml")
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     litho = LithoSim(lithoCfg.litho_config, device)
     l2s = []
     pvbs = []
     epes = []
+    res_str = ""
     for i in range(1, 11):
         m_name = f"MultiLevel_mask{i}.png"
         t_name = f"MultiLevel_target{i}.png"
@@ -159,10 +167,45 @@ def eval_filtered(mask_dir, target_dir):
         pvbs.append(pvb)
         epes.append(epe)
         print(f"[{m_path}]:\n L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {nshot:.0f}")
+        res_str += f"[Testcase{i}]: L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {nshot:.0f}\n"
+    print(res_str)
     print(f"[Result]: L2 {np.mean(l2s):.0f}; PVBand {np.mean(pvbs):.0f}; EPE {np.mean(epes):.1f}; ")
+    run.track(np.mean(l2s), name="L2")
+    run.track(np.mean(pvbs), name="PVB")
+    run.track(np.mean(epes), name="EPE")
+
+
+def init_logger(cfg, repo, experiment):
+    run = Run(
+        repo=repo, experiment=experiment, system_tracking_interval=None, log_system_params=False, capture_terminal_logs=True
+    )
+    for key, value in cfg.items():
+        run.set(("hparams", key), value, strict=False)
+    return run
+
+
+@hydra.main(version_base=None, config_path="../../configs", config_name="mrc")
+def main(cfg: DictConfig):
+    mask_dir = cfg.mask_dir
+    target_dir = cfg.target_dir
+    rect_shape = (cfg.rect_shape_w, cfg.rect_shape_h)
+    min_area = cfg.min_area
+    min_wh = cfg.min_wh
+    exp_folder = cfg.exp_folder
+    exp_name = cfg.exp_name
+    # mask_dir = "./benchmark/baseline/multilevel/mask"
+    run = init_logger(cfg, exp_folder, exp_name)
+    save_rects(mask_dir, resize_shape=rect_shape)
+    # rects_dir = f"./benchmark/baseline/multilevel/rects/{shape[0]}x{shape[1]}"
+    rects_dir = Path(mask_dir).parent / "rects" / f"{rect_shape[0]}x{rect_shape[1]}"
+    save_images(rects_dir, rect_shape=rect_shape, min_area=min_area, min_wh=min_wh)
+    filterd_dir = Path(rects_dir).parent / f"{rect_shape[0]}x{rect_shape[1]}_filtered" / f"area_{min_area}_wh_{min_wh}"
+    run.set(("hparams", "filterd_dir"), str(filterd_dir), strict=False)
+    eval_filtered(filterd_dir, target_dir, run)
 
 
 if __name__ == "__main__":
+    main()
     # resize_shape = (2048, 2048)
     # resize_shape = (512, 512)
     # resize_shape = (256, 256)
@@ -172,10 +215,10 @@ if __name__ == "__main__":
     # save_images(rect_shape=(256, 256))
 
     # save_rects(resize_shape=(2048, 2048))
-    min_area = 60
-    min_wh = 3
+    # min_area = 60
+    # min_wh = 3
     # save_images(rect_shape=(2048, 2048), min_area=min_area, min_wh=min_wh)
 
-    mask_dir = f"./benchmark/baseline/multilevel/rects/2048x2048_filtered/area_{min_area}_wh_{min_wh}"
-    target_dir = "./benchmark/baseline/multilevel/target"
-    eval_filtered(mask_dir, target_dir)
+    # mask_dir = f"./benchmark/baseline/multilevel/rects/2048x2048_filtered/area_{min_area}_wh_{min_wh}"
+    # target_dir = "./benchmark/baseline/multilevel/target"
+    # eval_filtered(mask_dir, target_dir)

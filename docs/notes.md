@@ -3,7 +3,12 @@
 Apr 20:
 
 - [ ] Baseline results organize.
+
+  - [ ] Use the original center test.
+
 - [ ] Exp on larger cases.
+
+- [ ] check back on EPE loss of the best parameters.
 
 Apr 19:
 

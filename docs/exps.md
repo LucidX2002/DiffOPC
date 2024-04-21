@@ -1,5 +1,11 @@
 # Best params
 
+Failed:
+
+- aim-0408-hparams
+
+______________________________________________________________________
+
 Conclusion:
 
 **StepSize == 4 is the best.**

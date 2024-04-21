@@ -159,3 +159,4 @@ aim_*
 ./benchmark/baseline/multilevel/rects/*
 
 benchmark/baseline/multilevel/rects
+outputs/
