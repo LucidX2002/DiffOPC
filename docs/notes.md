@@ -1,5 +1,8 @@
 ## Notes
 
+- [ ] Do some test on the best parameter set.
+  - [ ] Optmizer.
+
 Apr 20:
 
 - [ ] Baseline results organize.
