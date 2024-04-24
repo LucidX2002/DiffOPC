@@ -1,6 +1,9 @@
 ## Notes
 
+- [ ] The SRAF is not useful, should add the original version.
+
 - [ ] Do some test on the best parameter set.
+
   - [ ] Optmizer.
 
 Apr 20:
