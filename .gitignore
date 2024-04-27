@@ -156,7 +156,8 @@ configs/local/default.yaml
 tmp/
 aim-*
 aim_*
+./benchmark/baseline/*/rects/*
+./benchmark/baseline/curvmulti-large/rects/*
 ./benchmark/baseline/multilevel/rects/*
-
-benchmark/baseline/multilevel/rects
+benchmark/baseline/*/rects/*
 outputs/

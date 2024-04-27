@@ -6,10 +6,11 @@ import hydra
 import numpy as np
 import rootutils
 import torch
-from aim import Run
 from matplotlib import pyplot as plt
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image, ImageDraw
+
+from aim import Run
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
@@ -184,7 +185,7 @@ def init_logger(cfg, repo, experiment):
     return run
 
 
-@hydra.main(version_base=None, config_path="../../configs", config_name="mrc")
+@hydra.main(version_base=None, config_path="../../configs/mrc", config_name="mrc_curvlarge")
 def main(cfg: DictConfig):
     mask_dir = cfg.mask_dir
     target_dir = cfg.target_dir

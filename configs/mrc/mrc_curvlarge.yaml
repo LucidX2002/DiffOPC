@@ -1,0 +1,8 @@
+mask_dir: /home/local/eda13/gc29434/phd/intern/DiffOPC/benchmark/baseline/curvmulti-large/mask
+target_dir: /home/local/eda13/gc29434/phd/intern/DiffOPC/benchmark/baseline/curvmulti-large/target
+rect_shape_w: 2048
+rect_shape_h: 2048
+min_area: 400
+min_wh: 3
+exp_folder: ./aim-mrc-curvlarge
+exp_name: mrc
