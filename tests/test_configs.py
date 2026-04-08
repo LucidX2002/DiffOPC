@@ -1,37 +1,25 @@
-import hydra
-from hydra.core.hydra_config import HydraConfig
-from omegaconf import DictConfig
+from hydra import compose, initialize
+from omegaconf import OmegaConf
+
+from src.opc.edgeilt import EdgeILTCfg
 
 
-def test_train_config(cfg_train: DictConfig) -> None:
-    """Tests the training configuration provided by the `cfg_train` pytest fixture.
+def test_diffopc_default_config_has_runtime_required_keys() -> None:
+    """Ensure the default DiffOPC config resolves all runtime-required OPC settings."""
 
-    :param cfg_train: A DictConfig containing a valid training configuration.
-    """
-    assert cfg_train
-    assert cfg_train.data
-    assert cfg_train.model
-    assert cfg_train.trainer
+    with initialize(version_base="1.3", config_path="../configs"):
+        cfg = compose(
+            config_name="diffopc.yaml",
+            overrides=[
+                "extras.enforce_tags=false",
+                "extras.print_config=false",
+            ],
+        )
 
-    HydraConfig().set_config(cfg_train)
+    resolved_opc = OmegaConf.to_container(cfg.opc, resolve=True, throw_on_missing=True)
+    resolved_data = OmegaConf.to_container(cfg.data, resolve=True, throw_on_missing=True)
+    opc_cfg = EdgeILTCfg(resolved_opc)
 
-    hydra.utils.instantiate(cfg_train.data)
-    hydra.utils.instantiate(cfg_train.model)
-    hydra.utils.instantiate(cfg_train.trainer)
-
-
-def test_eval_config(cfg_eval: DictConfig) -> None:
-    """Tests the evaluation configuration provided by the `cfg_eval` pytest fixture.
-
-    :param cfg_train: A DictConfig containing a valid evaluation configuration.
-    """
-    assert cfg_eval
-    assert cfg_eval.data
-    assert cfg_eval.model
-    assert cfg_eval.trainer
-
-    HydraConfig().set_config(cfg_eval)
-
-    hydra.utils.instantiate(cfg_eval.data)
-    hydra.utils.instantiate(cfg_eval.model)
-    hydra.utils.instantiate(cfg_eval.trainer)
+    assert resolved_data["sraf_forbidden"] == opc_cfg["SRAF_FORBIDDEN"]
+    assert opc_cfg["IsInsertSRAF"] is False
+    assert opc_cfg["WeightL2"] > 0

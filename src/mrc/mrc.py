@@ -6,7 +6,6 @@ import hydra
 import numpy as np
 import rootutils
 import torch
-from matplotlib import pyplot as plt
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image, ImageDraw
 
@@ -15,47 +14,18 @@ from aim import Run
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
 
-from adabox import proc, tools
-from adabox.plot_tools import plot_rectangles
-
-from src.data.datatype import REALTYPE
 from src.litho.simple import LithoSim
-from src.opc.evaluation import evaluate
+from src.opc.evaluation import evaluate, format_metrics
+from src.utils.adabox_rectangles import binary_array_to_rectangles
 
 
-class ShotCounter:
-    def __init__(
-        self,
-        litho: LithoSim,
-        device: torch.device,
-        thresh=0.5,
-    ):
-        self._litho = litho
-        self._thresh = thresh
-        self._device = device
-
-    def run(self, mask, target=None, scale=1, shape=(512, 512)):
-        if not isinstance(mask, torch.Tensor):
-            mask = torch.tensor(mask, dtype=REALTYPE, device=self._device)
-        image = torch.nn.functional.interpolate(mask[None, None, :, :], size=shape, mode="nearest")[0, 0]
-        image = image.detach().cpu().numpy().astype(np.uint8)
-        comps, labels, stats, centroids = cv2.connectedComponentsWithStats(image)
-        rectangles = []
-        for label in range(1, comps):
-            pixels = []
-            for idx in range(labels.shape[0]):
-                for jdx in range(labels.shape[1]):
-                    if labels[idx, jdx] == label:
-                        pixels.append([idx, jdx, 0])
-            pixels = np.array(pixels)
-            x_data = np.unique(np.sort(pixels[:, 0]))
-            y_data = np.unique(np.sort(pixels[:, 1]))
-            if x_data.shape[0] == 1 or y_data.shape[0] == 1:
-                rectangles.append(tools.Rectangle(x_data.min(), x_data.max(), y_data.min(), y_data.max()))
-                continue
-            (rects, sep) = proc.decompose(pixels, 4)
-            rectangles.extend(rects)
-        return len(rectangles)
+def build_case_files(case_count, mask_pattern, target_pattern, mask_start_idx=1, target_start_idx=1):
+    case_files = []
+    for offset in range(case_count):
+        mask_idx = mask_start_idx + offset
+        target_idx = target_start_idx + offset
+        case_files.append((mask_pattern.format(idx=mask_idx), target_pattern.format(idx=target_idx)))
+    return case_files
 
 
 def image2rects(img_path, resize_shape=(512, 512)):
@@ -65,24 +35,7 @@ def image2rects(img_path, resize_shape=(512, 512)):
     binary_array = binary_array.astype(np.uint8)
     binary_array = np.rot90(binary_array, 3)
     binary_array_resized = cv2.resize(binary_array, resize_shape, interpolation=cv2.INTER_NEAREST)
-    comps, labels, stats, centroids = cv2.connectedComponentsWithStats(binary_array_resized)
-    rectangles = []
-    for label in range(1, comps):
-        pixels = []
-        for idx in range(labels.shape[0]):
-            for jdx in range(labels.shape[1]):
-                if labels[idx, jdx] == label:
-                    pixels.append([idx, jdx, 0])
-        pixels = np.array(pixels)
-        x_data = np.unique(np.sort(pixels[:, 0]))
-        y_data = np.unique(np.sort(pixels[:, 1]))
-        if x_data.shape[0] == 1 or y_data.shape[0] == 1:
-            rectangles.append(tools.Rectangle(x_data.min(), x_data.max(), y_data.min(), y_data.max()))
-            continue
-        (rects, sep) = proc.decompose(pixels, 4)
-        rectangles.extend(rects)
-    return rectangles
-    # return binary_array
+    return binary_array_to_rectangles(binary_array_resized)
 
 
 def filter_rect(rect, area=400, wh=20):
@@ -109,14 +62,13 @@ def rects2image(rects, shape=(512, 512), min_area=400, min_wh=20):
     return image
 
 
-def save_rects(mask_dir, resize_shape=(2048, 2048)):
-    for i in range(1, 11):
-        m_name = f"MultiLevel_mask{i}.png"
+def save_rects(mask_dir, case_files, resize_shape=(2048, 2048)):
+    for m_name, _ in case_files:
         m_path = f"{mask_dir}/{m_name}"
         # print(f"Processing {m_path}")
         out_dir = Path(mask_dir).parent / "rects" / f"{resize_shape[0]}x{resize_shape[1]}"
         out_dir.mkdir(parents=True, exist_ok=True)
-        o_name = f"{m_name.split('.')[0]}.pkl"
+        o_name = f"{Path(m_name).stem}.pkl"
         o_path = out_dir / o_name
         if not o_path.exists():
             rects = image2rects(m_path, resize_shape=resize_shape)
@@ -126,15 +78,15 @@ def save_rects(mask_dir, resize_shape=(2048, 2048)):
             print(f"{o_path} already exists, pass")
 
 
-def save_images(rects_dir, rect_shape=(2048, 2048), min_area=400, min_wh=20):
+def save_images(rects_dir, case_files, rect_shape=(2048, 2048), min_area=400, min_wh=20):
     shape = rect_shape
-    for i in range(1, 11):
-        m_name = f"MultiLevel_mask{i}.pkl"
+    for mask_name, _ in case_files:
+        m_name = f"{Path(mask_name).stem}.pkl"
         m_path = f"{rects_dir}/{m_name}"
         # print(f"Processing {m_path}")
         out_dir = Path(rects_dir).parent / f"{shape[0]}x{shape[1]}_filtered" / f"area_{min_area}_wh_{min_wh}"
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = f"{str(out_dir)}/{m_name.split('.')[0]}.png"
+        out_path = f"{str(out_dir)}/{Path(m_name).stem}.png"
         if Path(out_path).exists():
             print(f"{out_path} already exists, pass")
             continue
@@ -144,10 +96,10 @@ def save_images(rects_dir, rect_shape=(2048, 2048), min_area=400, min_wh=20):
         image = image.rotate(180)
         image = image.transpose(Image.FLIP_LEFT_RIGHT)
         image.save(out_path)
-        print(f"save to {str(out_dir)}/{m_name.split('.')[0]}.png")
+        print(f"save to {str(out_dir)}/{Path(m_name).stem}.png")
 
 
-def eval_filtered(mask_dir, target_dir, run):
+def eval_filtered(mask_dir, target_dir, run, case_files):
     lithoCfg = OmegaConf.load("./configs/litho/default.yaml")
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     litho = LithoSim(lithoCfg.litho_config, device)
@@ -155,9 +107,7 @@ def eval_filtered(mask_dir, target_dir, run):
     pvbs = []
     epes = []
     res_str = ""
-    for i in range(1, 11):
-        m_name = f"MultiLevel_mask{i}.png"
-        t_name = f"MultiLevel_target{i}.png"
+    for case_num, (m_name, t_name) in enumerate(case_files, start=1):
         m_path = f"{mask_dir}/{m_name}"
         target_path = f"{target_dir}/{t_name}"
         # print(f"Processing {m_path}")
@@ -167,8 +117,9 @@ def eval_filtered(mask_dir, target_dir, run):
         l2s.append(l2)
         pvbs.append(pvb)
         epes.append(epe)
-        print(f"[{m_path}]:\n L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {nshot:.0f}")
-        res_str += f"[Testcase{i}]: L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {nshot:.0f}\n"
+        metrics = format_metrics(l2, pvb, epe, nshot)
+        print(f"[{m_path}]:\n {metrics}")
+        res_str += f"[Testcase{case_num}]: {metrics}\n"
     print(res_str)
     print(f"[Result]: L2 {np.mean(l2s):.0f}; PVBand {np.mean(pvbs):.0f}; EPE {np.mean(epes):.1f}; ")
     run.track(np.mean(l2s), name="L2")
@@ -189,6 +140,13 @@ def init_logger(cfg, repo, experiment):
 def main(cfg: DictConfig):
     mask_dir = cfg.mask_dir
     target_dir = cfg.target_dir
+    case_files = build_case_files(
+        case_count=cfg.case_count,
+        mask_pattern=cfg.mask_pattern,
+        target_pattern=cfg.target_pattern,
+        mask_start_idx=cfg.mask_start_idx,
+        target_start_idx=cfg.target_start_idx,
+    )
     rect_shape = (cfg.rect_shape_w, cfg.rect_shape_h)
     min_area = cfg.min_area
     min_wh = cfg.min_wh
@@ -196,13 +154,13 @@ def main(cfg: DictConfig):
     exp_name = cfg.exp_name
     # mask_dir = "./benchmark/baseline/multilevel/mask"
     run = init_logger(cfg, exp_folder, exp_name)
-    save_rects(mask_dir, resize_shape=rect_shape)
+    save_rects(mask_dir, case_files, resize_shape=rect_shape)
     # rects_dir = f"./benchmark/baseline/multilevel/rects/{shape[0]}x{shape[1]}"
     rects_dir = Path(mask_dir).parent / "rects" / f"{rect_shape[0]}x{rect_shape[1]}"
-    save_images(rects_dir, rect_shape=rect_shape, min_area=min_area, min_wh=min_wh)
+    save_images(rects_dir, case_files, rect_shape=rect_shape, min_area=min_area, min_wh=min_wh)
     filterd_dir = Path(rects_dir).parent / f"{rect_shape[0]}x{rect_shape[1]}_filtered" / f"area_{min_area}_wh_{min_wh}"
     run.set(("hparams", "filterd_dir"), str(filterd_dir), strict=False)
-    eval_filtered(filterd_dir, target_dir, run)
+    eval_filtered(filterd_dir, target_dir, run, case_files)
 
 
 if __name__ == "__main__":

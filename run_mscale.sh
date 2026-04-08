@@ -1,6 +1,7 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
-python=/home/local/eda13/gc29434/miniconda3/envs/dopc/bin/python
+# Use the active environment unless PYTHON is explicitly overridden.
+python="${PYTHON:-python}"
 
 data_idx=1
 

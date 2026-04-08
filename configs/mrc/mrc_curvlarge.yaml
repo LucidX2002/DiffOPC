@@ -1,8 +1,13 @@
-mask_dir: /home/local/eda13/gc29434/phd/intern/DiffOPC/benchmark/baseline/curvmulti-large/mask
-target_dir: /home/local/eda13/gc29434/phd/intern/DiffOPC/benchmark/baseline/curvmulti-large/target
+mask_dir: ${oc.env:PROJECT_ROOT}/benchmark/baseline/curvmulti-large/mask
+target_dir: ${oc.env:PROJECT_ROOT}/benchmark/baseline/curvmulti-large/target_bk
+mask_pattern: MultiLevel_mask{idx}.png
+target_pattern: t{idx}_0_mask.png
+case_count: 10
+mask_start_idx: 1
+target_start_idx: 11
 rect_shape_w: 2048
 rect_shape_h: 2048
 min_area: 400
 min_wh: 3
-exp_folder: ./aim-mrc-curvlarge
+exp_folder: ${oc.env:PROJECT_ROOT}/aim-mrc-curvlarge
 exp_name: mrc

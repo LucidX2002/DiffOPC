@@ -30,6 +30,8 @@ from torch.utils.data import Dataset
 import src.opc.evaluation as evaluation
 from src.litho.simple import LithoSim
 from src.opc.edgeilt import EdgeILTCfg, EdgeILTSolver
+from src.opc.edgeilt_sraf import EdgeILTCfg as EdgeILTSrafCfg
+from src.opc.edgeilt_sraf import EdgeILTSolver as EdgeILTSrafSolver
 from src.utils import (
     RankedLogger,
     extras,
@@ -61,7 +63,11 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     litho: LithoSim = hydra.utils.instantiate(cfg.litho, device=device)
 
     log.info("Instantiating OPC model")
-    opc_model: EdgeILTSolver = EdgeILTSolver(EdgeILTCfg(cfg.opc), litho, device)
+    if cfg.opc.IsInsertSRAF:
+        log.info("Using SRAF-capable solver")
+        opc_model = EdgeILTSrafSolver(EdgeILTSrafCfg(cfg.opc), litho, device)
+    else:
+        opc_model = EdgeILTSolver(EdgeILTCfg(cfg.opc), litho, device)
 
     log.info(f"Instantiating dataset <{cfg.data._target_}>")
     dataset: Dataset = hydra.utils.instantiate(cfg.data, device=device)

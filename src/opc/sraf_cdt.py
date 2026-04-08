@@ -51,9 +51,12 @@ class EdgeILTCfg:
             "Iterations",
             "TargetDensity",
             "SigmoidSteepness",
+            "EPELoss",
             "WeightEPE",
+            "WeightL2",
             "WeightPVBL2",
             "WeightPVBand",
+            "OPT",
             "StepSize",
             "TileSizeX",
             "TileSizeY",
@@ -61,17 +64,33 @@ class EdgeILTCfg:
             "OffsetY",
             "ILTSizeX",
             "ILTSizeY",
+            "SEG_LENGTH",
             "DownScale",
+            "VISUAL_DEBUG",
+            "IsInsertSRAF",
+            "SRAF_FORBIDDEN",
         ]
         for key in required:
             assert key in self._config, f"[SimpleILT]: Cannot find the config {key}."
-        intfields = ["Iterations", "TileSizeX", "TileSizeY", "OffsetX", "OffsetY", "ILTSizeX", "ILTSizeY", "DownScale"]
+        intfields = [
+            "Iterations",
+            "TileSizeX",
+            "TileSizeY",
+            "OffsetX",
+            "OffsetY",
+            "ILTSizeX",
+            "ILTSizeY",
+            "SEG_LENGTH",
+            "DownScale",
+            "SRAF_FORBIDDEN",
+        ]
         for key in intfields:
             self._config[key] = int(self._config[key])
         floatfields = [
             "TargetDensity",
             "SigmoidSteepness",
             "WeightEPE",
+            "WeightL2",
             "WeightPVBL2",
             "WeightPVBand",
             "StepSize",

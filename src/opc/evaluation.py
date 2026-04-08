@@ -10,6 +10,7 @@ import torch.nn.functional as func
 from src.data.datatype import REALTYPE
 from src.data.loaders import glp_seg
 from src.litho.simple import LithoSim
+from src.utils.adabox_rectangles import mask_to_rectangles
 
 
 class Basic:
@@ -145,12 +146,27 @@ def boundaries(target):
 
 
 def check(image, sample, target, direction):
+    empty = sample[:0]
+
+    def in_bounds(points):
+        return (
+            (points[:, 0] >= 0)
+            & (points[:, 0] < image.shape[0])
+            & (points[:, 1] >= 0)
+            & (points[:, 1] < image.shape[1])
+        )
+
+    inner = empty
+    outer = empty
+
     if direction == "v":
         if (target[sample[0, 0].long(), sample[0, 1].long() + 1] == 1) and (
             target[sample[0, 0].long(), sample[0, 1].long() - 1] == 0
         ):  # left ,x small
             inner = sample + torch.tensor([0, EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device)
             outer = sample + torch.tensor([0, -EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device)
+            inner = inner[in_bounds(inner)]
+            outer = outer[in_bounds(outer)]
             inner = sample[image[inner[:, 0].long(), inner[:, 1].long()] == 0, :]
             outer = sample[image[outer[:, 0].long(), outer[:, 1].long()] == 1, :]
 
@@ -159,6 +175,8 @@ def check(image, sample, target, direction):
         ):  # right, x large
             inner = sample + torch.tensor([0, -EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device)
             outer = sample + torch.tensor([0, EPE_CONSTRAINT], dtype=sample.dtype, device=sample.device)
+            inner = inner[in_bounds(inner)]
+            outer = outer[in_bounds(outer)]
             inner = sample[image[inner[:, 0].long(), inner[:, 1].long()] == 0, :]
             outer = sample[image[outer[:, 0].long(), outer[:, 1].long()] == 1, :]
 
@@ -168,6 +186,8 @@ def check(image, sample, target, direction):
         ):  # up, y small
             inner = sample + torch.tensor([EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device)
             outer = sample + torch.tensor([-EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device)
+            inner = inner[in_bounds(inner)]
+            outer = outer[in_bounds(outer)]
             inner = sample[image[inner[:, 0].long(), inner[:, 1].long()] == 0, :]
             outer = sample[image[outer[:, 0].long(), outer[:, 1].long()] == 1, :]
 
@@ -176,6 +196,8 @@ def check(image, sample, target, direction):
         ):  # low, y large
             inner = sample + torch.tensor([-EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device)
             outer = sample + torch.tensor([EPE_CONSTRAINT, 0], dtype=sample.dtype, device=sample.device)
+            inner = inner[in_bounds(inner)]
+            outer = outer[in_bounds(outer)]
             inner = sample[image[inner[:, 0].long(), inner[:, 1].long()] == 0, :]
             outer = sample[image[outer[:, 0].long(), outer[:, 1].long()] == 1, :]
 
@@ -285,10 +307,6 @@ class EPEChecker:
         return epeIn, epeOut
 
 
-import cv2
-from adabox import proc, tools
-
-
 class ShotCounter:
     def __init__(
         self,
@@ -301,27 +319,14 @@ class ShotCounter:
         self._device = device
 
     def run(self, mask, target=None, scale=1, shape=(512, 512)):
-        if not isinstance(mask, torch.Tensor):
-            mask = torch.tensor(mask, dtype=REALTYPE, device=self._device)
-        image = torch.nn.functional.interpolate(mask[None, None, :, :], size=shape, mode="nearest")[0, 0]
-        image = image.detach().cpu().numpy().astype(np.uint8)
-        comps, labels, stats, centroids = cv2.connectedComponentsWithStats(image)
-        rectangles = []
-        for label in range(1, comps):
-            pixels = []
-            for idx in range(labels.shape[0]):
-                for jdx in range(labels.shape[1]):
-                    if labels[idx, jdx] == label:
-                        pixels.append([idx, jdx, 0])
-            pixels = np.array(pixels)
-            x_data = np.unique(np.sort(pixels[:, 0]))
-            y_data = np.unique(np.sort(pixels[:, 1]))
-            if x_data.shape[0] == 1 or y_data.shape[0] == 1:
-                rectangles.append(tools.Rectangle(x_data.min(), x_data.max(), y_data.min(), y_data.max()))
-                continue
-            (rects, sep) = proc.decompose(pixels, 4)
-            rectangles.extend(rects)
-        return len(rectangles)
+        return len(mask_to_rectangles(mask, device=self._device, shape=shape))
+
+
+def format_metrics(l2, pvb, epe, nshot=None):
+    metrics = [f"L2 {l2:.0f}", f"PVBand {pvb:.0f}", f"EPE {epe:.0f}"]
+    if nshot is not None and nshot >= 0:
+        metrics.append(f"Shot: {nshot:.0f}")
+    return "; ".join(metrics)
 
 
 def evaluate(mask, target, litho, device, scale=1, shots=False, verbose=False):
@@ -336,18 +341,21 @@ def evaluate(mask, target, litho, device, scale=1, shots=False, verbose=False):
     nshot = shotCount.run(mask, shape=(512, 512)) if shots else -1
     # print(f"Shot counting time: {time.time() - begin:.2f}")
     if verbose:
-        print(f"[{maskfile}]: L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {nshot:.0f}")
+        print(format_metrics(l2, pvb, epe, nshot))
 
     return l2, pvb, epe, nshot
 
 
 if __name__ == "__main__":
+    import cv2
+
     targetfile = sys.argv[1]
     maskfile = sys.argv[2]
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     litho = LithoSim("./config/lithosimple.txt")
-    test = Basic(litho, 0.5)
-    epeCheck = EPEChecker(litho, 0.5)
-    shotCount = ShotCounter(litho, 0.5)
+    test = Basic(litho=litho, thresh=0.5, device=device)
+    epeCheck = EPEChecker(litho=litho, thresh=0.5, device=device)
+    shotCount = ShotCounter(litho=litho, thresh=0.5, device=device)
 
     mask = cv2.imread(maskfile)[:, :, 0] / 255
     mask = cv2.resize(mask, (2048, 2048))
@@ -364,4 +372,4 @@ if __name__ == "__main__":
     epe = epeIn + epeOut
     shot = shotCount.run(mask, shape=(512, 512))
 
-    print(f"[{maskfile}]: L2 {l2:.0f}; PVBand {pvb:.0f}; EPE {epe:.0f}; Shot: {shot:.0f}")
+    print(f"[{maskfile}]: {format_metrics(l2, pvb, epe, shot)}")

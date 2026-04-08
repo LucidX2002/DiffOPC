@@ -1,8 +1,13 @@
-mask_dir: /home/local/eda13/gc29434/phd/intern/DiffOPC/benchmark/baseline/multilevel/mask
-target_dir: /home/local/eda13/gc29434/phd/intern/DiffOPC/benchmark/baseline/multilevel/target
+mask_dir: ${oc.env:PROJECT_ROOT}/benchmark/baseline/multilevel/mask
+target_dir: ${oc.env:PROJECT_ROOT}/benchmark/baseline/multilevel/target
+mask_pattern: MultiLevel_mask{idx}.png
+target_pattern: MultiLevel_target{idx}.png
+case_count: 10
+mask_start_idx: 1
+target_start_idx: 1
 rect_shape_w: 2048
 rect_shape_h: 2048
 min_area: 400
 min_wh: 3
-exp_folder: ./aim-mrc
+exp_folder: ${oc.env:PROJECT_ROOT}/aim-mrc
 exp_name: mrc

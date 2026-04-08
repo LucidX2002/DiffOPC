@@ -49,9 +49,12 @@ class EdgeILTCfg:
             "Iterations",
             "TargetDensity",
             "SigmoidSteepness",
+            "EPELoss",
             "WeightEPE",
+            "WeightL2",
             "WeightPVBL2",
             "WeightPVBand",
+            "OPT",
             "StepSize",
             "TileSizeX",
             "TileSizeY",
@@ -59,17 +62,33 @@ class EdgeILTCfg:
             "OffsetY",
             "ILTSizeX",
             "ILTSizeY",
+            "SEG_LENGTH",
             "DownScale",
+            "VISUAL_DEBUG",
+            "IsInsertSRAF",
+            "SRAF_FORBIDDEN",
         ]
         for key in required:
             assert key in self._config, f"[SimpleILT]: Cannot find the config {key}."
-        intfields = ["Iterations", "TileSizeX", "TileSizeY", "OffsetX", "OffsetY", "ILTSizeX", "ILTSizeY", "DownScale"]
+        intfields = [
+            "Iterations",
+            "TileSizeX",
+            "TileSizeY",
+            "OffsetX",
+            "OffsetY",
+            "ILTSizeX",
+            "ILTSizeY",
+            "SEG_LENGTH",
+            "DownScale",
+            "SRAF_FORBIDDEN",
+        ]
         for key in intfields:
             self._config[key] = int(self._config[key])
         floatfields = [
             "TargetDensity",
             "SigmoidSteepness",
             "WeightEPE",
+            "WeightL2",
             "WeightPVBL2",
             "WeightPVBand",
             "StepSize",
@@ -79,6 +98,9 @@ class EdgeILTCfg:
 
     def __getitem__(self, key):
         return self._config[key]
+
+    def get(self, key, default=None):
+        return self._config.get(key, default)
 
 
 def get_avg_grad_line(edge, grad_output):
@@ -284,12 +306,16 @@ class EdgeILTSolver:
             sraf_direction_vectors,
             sraf_velocities,
             sraf_corner_ids,
+            sraf_epe_points,
+            sraf_seg_types,
         ) = segs2metadata(sraf_seg_params, start_polygon_id=start_polygon_id, device=self._device)
         new_edge_params = torch.cat([edge_params, sraf_edge_params], dim=0)
         metadata["polygon_ids"] = torch.cat([metadata["polygon_ids"], sraf_polygon_ids], dim=0)
         metadata["direction_vectors"] = torch.cat([metadata["direction_vectors"], sraf_direction_vectors], dim=0)
         metadata["velocities"] = torch.cat([metadata["velocities"], sraf_velocities], dim=0)
         metadata["corner_ids"] = torch.cat([metadata["corner_ids"], sraf_corner_ids], dim=0)
+        metadata["epe_points"] = torch.cat([metadata["epe_points"], sraf_epe_points], dim=0)
+        metadata["seg_types"] = metadata["seg_types"] + sraf_seg_types
         return new_edge_params, metadata
 
     def cal_loss(self, target, printedNom, printedMax, printedMin, kernelCurv=None):
@@ -398,11 +424,12 @@ class EdgeILTSolver:
         # Visual Debug
         if self._config["VISUAL_DEBUG"]:
             report_dir = f"report_{self._config['DownScale']}x"
+            visual_output_root = self._config.get("VISUAL_OUTPUT_DIR", "./tmp").rstrip("/")
             if self._config["DownScale"] != 1:
                 down_dir = f"down{self._config['DownScale']}x"
-                save_dir = f"./tmp/{report_dir}/{down_dir}/M1_test{case_id}"
+                save_dir = f"{visual_output_root}/{report_dir}/{down_dir}/M1_test{case_id}"
             else:
-                save_dir = f"./tmp/{report_dir}/M1_test{case_id}"
+                save_dir = f"{visual_output_root}/{report_dir}/M1_test{case_id}"
             os.makedirs(save_dir, exist_ok=True)
             all_masks.append({"mask": bestMask.cpu().numpy(), "iteration": bestMaskIter})
             print(f"Saving masks to {save_dir}")

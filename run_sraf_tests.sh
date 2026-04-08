@@ -1,6 +1,7 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
-python=/home/local/eda13/gc29434/miniconda3/envs/dopc/bin/python
+# Use the active environment unless PYTHON is explicitly overridden.
+python="${PYTHON:-python}"
 
 # device_id=1
 thres_mins=(0.1 0.2 0.3 0.4)

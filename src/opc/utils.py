@@ -623,10 +623,18 @@ def create_binary_mask_from_edge_params(edge_params, polygon_ids, width, height,
         x_coords = all_points[:, 0]
         y_coords = all_points[:, 1]
 
-        min_x = torch.min(x_coords)
-        min_y = torch.min(y_coords)
-        max_x = torch.max(x_coords)
-        max_y = torch.max(y_coords)
+        min_x = int(torch.floor(torch.min(x_coords)).item())
+        min_y = int(torch.floor(torch.min(y_coords)).item())
+        max_x = int(torch.ceil(torch.max(x_coords)).item())
+        max_y = int(torch.ceil(torch.max(y_coords)).item())
+
+        min_x = max(min_x, 0)
+        min_y = max(min_y, 0)
+        max_x = min(max_x, width - 1)
+        max_y = min(max_y, height - 1)
+
+        if min_x > max_x or min_y > max_y:
+            continue
 
         x = torch.arange(min_x, max_x + 1, dtype=torch.float32, device=device)
         y = torch.arange(min_y, max_y + 1, dtype=torch.float32, device=device)
@@ -668,7 +676,7 @@ def create_binary_mask_from_edge_params(edge_params, polygon_ids, width, height,
         cross = v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]
         inside = ((v1[..., 0] < 0) & (v2[..., 0] >= 0) & (cross < 0)) | ((v1[..., 0] >= 0) & (v2[..., 0] < 0) & (cross > 0))
         count = torch.sum(inside, dim=0)
-        mask[min_y.int() : max_y.int() + 1, min_x.int() : max_x.int() + 1] |= count % 2 == 1
+        mask[min_y : max_y + 1, min_x : max_x + 1] |= count % 2 == 1
     mask[sraf_image > 0.5] = 1
     return mask
 
@@ -1002,6 +1010,9 @@ class EPEChecker:
 
 
 from adabox import proc, tools
+from src.utils.adabox_compat import patch_adabox_mode_compat
+
+patch_adabox_mode_compat(proc, tools)
 
 
 class ShotCounter:
@@ -1063,34 +1074,16 @@ def find_intersection_and_adjust(line1, line2, is_line1_vertical=True):
     vertical_line = line1 if is_line1_vertical else line2
     horizontal_line = line2 if is_line1_vertical else line1
 
-    # Find intersection point
-    intersection_x = vertical_line[0, 0]  # X-coordinate from the vertical line
-    intersection_y = horizontal_line[1, 0]  # Y-coordinate from the horizontal line
-    intersection_point = torch.tensor([intersection_x, intersection_y])
+    # Find the intended intersection point from the dominant axis of each segment.
+    intersection_x = vertical_line[0, 0]
+    intersection_y = horizontal_line[1, 0]
+    intersection_point = torch.stack((intersection_x, intersection_y)).to(line1.device)
 
-    # Adjust lines to meet at the intersection point
-    if is_line1_vertical:
-        # Adjust line1 (vertical) end point to intersection
-        new_line1 = torch.tensor([[vertical_line[0, 0], vertical_line[0, 0]], [vertical_line[1, 0], intersection_y]])
-
-        # Adjust line2 (horizontal) start point to intersection
-        new_line2 = torch.tensor(
-            [
-                [intersection_x, horizontal_line[0, 1]],
-                [horizontal_line[1, 1], horizontal_line[1, 1]],
-            ]
-        )
-    else:
-        # Adjust line1 (horizontal) end point to intersection
-        new_line1 = torch.tensor(
-            [
-                [horizontal_line[0, 0], intersection_x],
-                [horizontal_line[1, 0], horizontal_line[1, 0]],
-            ]
-        )
-
-        # Adjust line2 (vertical) start point to intersection
-        new_line2 = torch.tensor([[vertical_line[0, 1], vertical_line[0, 1]], [intersection_y, vertical_line[1, 1]]])
+    # Adjust line1 end point and line2 start point to the exact same intersection.
+    new_line1 = line1.clone().detach()
+    new_line2 = line2.clone().detach()
+    new_line1[:, 1] = intersection_point
+    new_line2[:, 0] = intersection_point
 
     # print(new_line1, '\n',  new_line2, '\n', intersection_point, '\n')
     # print('line1', line1, '\n', 'line2', line2)

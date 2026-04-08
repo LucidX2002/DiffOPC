@@ -29,6 +29,7 @@ SRAF_min_contour_wh_rule: 20
 SRAF_initial_sraf_wh: 60
 # Debug parameters
 VISUAL_DEBUG: 0
+VISUAL_OUTPUT_DIR: ./tmp
 VERBOSE: 0
 
 Evaluation: 1
