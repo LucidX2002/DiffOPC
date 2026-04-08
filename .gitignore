@@ -163,3 +163,5 @@ benchmark/baseline/*/rects/*
 outputs/
 visual_outputs/
 .omx/
+requirements.lock.txt
+environment.lock.yaml

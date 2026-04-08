@@ -7,28 +7,29 @@
 - 仓库路径：`/home/xiaye/lucidx/DiffOPC`
 - 当前可用 conda 环境：`dopc`
 - 当前工作区里实际验证过的 Python 版本：`3.11.12`
+- 当前仓库要求的 Python 主版本：`3.11`
 - 依赖安装方式：
   - 已有环境时：`conda activate dopc`
   - 新建环境时可参考 `environment.yaml` 或直接执行：
 
 ```bash
-conda create -n dopc python=3.10
+conda create -n dopc python=3.11
 conda activate dopc
 pip install -r requirements.txt
 ```
 
 说明：
-- `environment.yaml` 里写的是 `python=3.10`。
-- 当前本地 `dopc` 环境实际跑通的是 Python 3.11。
-- 如果要把当前可运行的 `dopc` 环境重新导出，执行：
+- `environment.yaml` 已经对齐到 `python=3.11`。
+- `requirements.txt` 是当前公开的主依赖入口。
+- 如果要把当前机器上的 `dopc` 环境重新导出成本地锁文件，执行：
 
 ```bash
 bash export_dopc_env.sh
 ```
 
 默认会生成：
-- `requirements-dopc.txt`
-- `environment-dopc.yaml`
+- `requirements.lock.txt`
+- `environment.lock.yaml`
 
 ## 2. 数据集位置
 

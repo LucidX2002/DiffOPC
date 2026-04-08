@@ -3,8 +3,8 @@
 set -euo pipefail
 
 env_name="${DOPC_ENV_NAME:-dopc}"
-requirements_out="${DOPC_REQUIREMENTS_OUTPUT:-requirements-dopc.txt}"
-conda_out="${DOPC_CONDA_OUTPUT:-environment-dopc.yaml}"
+requirements_out="${DOPC_REQUIREMENTS_OUTPUT:-requirements.lock.txt}"
+conda_out="${DOPC_CONDA_OUTPUT:-environment.lock.yaml}"
 conda_bin="${CONDA_BIN:-conda}"
 
 pip_cmd=("$conda_bin" run -n "$env_name" python -m pip freeze --exclude-editable)

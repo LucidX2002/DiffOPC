@@ -1,5 +1,6 @@
-# Snapshot aligned with the currently working `dopc` environment.
-# Refresh the exact environment export with `bash export_dopc_env.sh`.
+# Canonical pip dependencies for the current runnable DiffOPC workspace.
+# Supported and validated Python version: 3.11.
+# For a machine-specific lock snapshot, run `bash export_dopc_env.sh`.
 
 # --------- pytorch --------- #
 torch==2.7.0

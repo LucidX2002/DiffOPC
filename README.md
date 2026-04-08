@@ -1,6 +1,6 @@
 # Differentiable OPC
 
-This repository is based on the original [dekura/DiffOPC](https://github.com/dekura/DiffOPC) and includes Codex-assisted fixes to improve local runnability, MRC execution, scripts, and environment export.
+This repository is based on the original [dekura/DiffOPC](https://github.com/dekura/DiffOPC) and includes Codex-assisted fixes to improve local runnability, MRC execution, scripts, and environment setup.
 
 The developing framework is beased on pytorch + [hydra configuring](https://hydra.cc/) template. [FRAMEWORK README](./docs/FRAMEWORK-README.md)
 
@@ -17,11 +17,8 @@ git clone https://github.com/LucidX2002/DiffOPC.git
 cd DiffOPC
 
 # [OPTIONAL] create conda environment
-conda create -n dopc python=3.10
+conda create -n dopc python=3.11
 conda activate dopc
-
-# install pytorch according to instructions
-# https://pytorch.org/get-started/
 
 # install requirements
 pip install -r requirements.txt
