@@ -3,7 +3,7 @@
 # For a machine-specific lock snapshot, run `bash export_dopc_env.sh`.
 
 # --------- pytorch --------- #
-torch==2.7.0
+torch==2.11.0
 torchvision==0.22.0
 lightning==2.6.1
 torchmetrics==1.9.0
