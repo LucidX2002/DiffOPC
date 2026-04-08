@@ -100,7 +100,7 @@ klayout==0.28.17.post1
 layout2svg==0.1.6
 libcudf-cu11==25.6.0
 libcuml-cu11==25.6.0
-libcuvs-cu11==25.6.0
+libcuvs-cu11==25.6.1
 libkvikio-cu11==25.6.0
 libraft-cu11==25.6.0
 librmm-cu11==25.6.0
