@@ -22,7 +22,7 @@ aim==3.29.1
 
 # --------- others --------- #
 adaptive-boxes==0.0.4  # provides the adabox module used by OPC evaluation and MRC code
-matplotlib==3.10.3
+matplotlib==3.10.8
 numpy==1.26.4
 opencv-python==4.11.0.86
 packaging==25.0
