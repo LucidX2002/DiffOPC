@@ -1,5 +1,7 @@
 # Differentiable OPC
 
+This repository is based on the original [dekura/DiffOPC](https://github.com/dekura/DiffOPC) and includes Codex-assisted fixes to improve local runnability, MRC execution, scripts, and environment export.
+
 The developing framework is beased on pytorch + [hydra configuring](https://hydra.cc/) template. [FRAMEWORK README](./docs/FRAMEWORK-README.md)
 
 Dataset layout and local dataset status are documented in [DATASET README](./docs/DATASET-README.md).
@@ -11,7 +13,7 @@ The local change summary relative to the upstream repo is documented in [WORKSPA
 
 ```bash
 # clone project
-git clone https://github.com/dekura/DiffOPC.git
+git clone https://github.com/LucidX2002/DiffOPC.git
 cd DiffOPC
 
 # [OPTIONAL] create conda environment
