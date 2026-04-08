@@ -35,7 +35,7 @@ cmd2==3.4.0
 colorlog==6.9.0
 colour==0.1.5
 contourpy==1.3.2
-cryptography==46.0.5
+cryptography==46.0.7
 cubinlinker-cu11==0.3.0.post3
 cuda-bindings==11.8.7
 cuda-python==11.8.7
