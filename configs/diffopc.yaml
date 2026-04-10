@@ -9,6 +9,7 @@ defaults:
   - solver: default
   - data: default
   - logger: aim # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
+  - export: default
   - paths: default
   - extras: default
   - hydra: default

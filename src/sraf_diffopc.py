@@ -34,6 +34,7 @@ from src.opc.edgeilt import EdgeILTCfg, EdgeILTSolver
 from src.opc.sraf_cdt import EdgeILTSrafSolver
 from src.utils import (
     RankedLogger,
+    export_case_mask,
     extras,
     get_metric_value,
     instantiate_loggers,
@@ -107,6 +108,9 @@ def solve(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             target, edge_params, metadata, sraf_image=sraf_image, case_id=data_idx, verbose=cfg.opc[opc_resolution]["VERBOSE"]
         )
         runtime = time.time() - begin
+        if cfg.export.enabled:
+            gds_path, rect_count = export_case_mask(best_mask, cfg.export, data_idx)
+            log.info(f"[Testcase {data_idx}]: Exported GDS to {gds_path} using {rect_count} rectangles")
         if cfg.get("eval"):
             l2, pvb, epe, shot = evaluation.evaluate(
                 best_mask, target_ref, litho, device=device, scale=cfg.opc[opc_resolution]["DownScale"], shots=True

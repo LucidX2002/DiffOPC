@@ -84,8 +84,8 @@ opc.IsInsertSRAF=True
 当前脚本默认等价于：
 
 ```bash
-START_IDX=1
-END_IDX=3
+DATA_DIR=/home/xiaye/lucidx/DiffOPC/benchmark/ICCAD2013
+DATA_IDX=3
 ```
 
 ## 4. 主要运行入口
@@ -224,7 +224,7 @@ logs/train/runs/<timestamp>/
 ```
 
 例如 `run_debug.sh` 的输出会落到 `logs/train/runs/...`。
-`run_debug_visual.sh` 除了日志外，还会在 `tmp/report_1x/...` 下保存中间和最终图片。
+`run_debug_visual.sh` 除了日志外，还会在 `visual_outputs/ICCAD2013/report_sraf/M1_test3/...` 下保存中间和最终图片。
 
 ### Aim 日志
 

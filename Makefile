@@ -16,15 +16,17 @@ clean-logs: ## Clean logs
 format: ## Run pre-commit hooks
 	pre-commit run -a
 
-sync: ## Merge changes from main branch to your current branch
-	git pull
-	git pull origin main
-
 test: ## Run not slow tests
 	pytest -k "not slow"
 
 test-full: ## Run all tests
 	pytest
 
-train: ## Train the model
-	python src/train.py
+diffopc: ## Run the main DiffOPC entrypoint
+	python src/diffopc.py
+
+debug: ## Run the default single-case debug flow
+	bash run_debug.sh
+
+mrc: ## Run the default MRC sweep
+	bash run_mrc.sh

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 # Use the active environment unless PYTHON is explicitly overridden.
 python="${PYTHON:-python}"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-start_idx=1
-end_idx=10
-data_dir=/home/xiaye/lucidx/DiffOPC/benchmark/edge_bench
-visual_output_root=/home/xiaye/lucidx/DiffOPC/visual_outputs
+data_idx="${DATA_IDX:-3}"
+data_dir="${DATA_DIR:-${repo_root}/benchmark/ICCAD2013}"
+visual_output_root="${VISUAL_OUTPUT_ROOT:-${repo_root}/visual_outputs}"
 dataset_name="$(basename "$data_dir")"
 visual_output_dir="${visual_output_root}/${dataset_name}"
 
@@ -15,9 +17,8 @@ $python src/diffopc.py \
   opc.IsInsertSRAF=True \
   opc.VISUAL_DEBUG=1 \
   opc.VISUAL_OUTPUT_DIR="$visual_output_dir" \
-  data=default \
+  data=single \
   data.data_dir="$data_dir" \
-  data.start_idx="$start_idx" \
-  data.end_idx="$end_idx" \
+  data.data_idx="$data_idx" \
   extras.print_config=false \
   logger.aim.experiment=debug_visual

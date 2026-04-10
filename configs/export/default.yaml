@@ -1,0 +1,7 @@
+enabled: false
+output_dir: ${paths.output_dir}/gds
+layer: 1
+datatype: 0
+library_name: DIFFOPC
+file_prefix: M1_test
+flip_y: false

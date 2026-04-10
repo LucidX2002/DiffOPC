@@ -175,7 +175,7 @@ python="${PYTHON:-python}"
 opc.VISUAL_DEBUG=1
 ```
 
-这样主流程除了写日志，还会在 `tmp/report_1x/...` 下输出 mask / wafer 图片。
+这样主流程除了写日志，还会在 `visual_outputs/<dataset>/report_sraf/...` 下输出 mask / wafer 图片。
 
 ### G. 新增本地文档
 
@@ -220,8 +220,8 @@ bash run_debug_visual.sh
 结果：
 - 成功完成 `Testcase 3`
 - 生成图片目录：
-  - `tmp/report_1x/M1_test3/mask/`
-  - `tmp/report_1x/M1_test3/wafer/`
+  - `visual_outputs/ICCAD2013/report_sraf/M1_test3/mask/`
+  - `visual_outputs/ICCAD2013/report_sraf/M1_test3/wafer/`
 
 ### 3. MRC 回归测试
 
