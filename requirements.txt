@@ -25,7 +25,7 @@ adaptive-boxes==0.0.4  # provides the adabox module used by OPC evaluation and M
 matplotlib==3.10.3
 numpy==1.26.4
 opencv-python==4.11.0.86
-packaging==25.0
+packaging==26.0
 pillow==11.2.1
 pytest==9.0.2
 rich==14.3.3
